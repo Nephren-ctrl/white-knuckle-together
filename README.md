@@ -23,11 +23,6 @@ Singleplayer is entirely unaffected.
 
 ## Installation
 
-### Release
-
-1. Download newest release.
-2. Extract contents to White Knuckle folder (overwrite if necessary).
-
 ### Manual
 
 1. Install [BepInEx 5](https://thunderstore.io/c/white-knuckle/p/BepInEx/BepInExPack/) (BepInExPack 5.4.2305) into your White Knuckle folder and launch the game once.
