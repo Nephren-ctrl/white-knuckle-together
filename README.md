@@ -34,7 +34,7 @@ Singleplayer is entirely unaffected.
 
 - This was originally made for playing with friends, but it's stable enough that I think others can have fun with it.
 - Only the campaign is supported for now.
-- Public lobbies and balancing are not my focus. The mod is meant for playing with friends and helping each other (or racing).
+- Public lobbies and balancing are not my focus, but some effort did go into that. The mod is meant for playing with friends and helping each other (or racing).
 
 ## Building from source
 
