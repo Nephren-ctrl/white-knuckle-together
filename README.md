@@ -23,6 +23,8 @@ Singleplayer is entirely unaffected.
 
 ## Installation
 
+### Release
+
 1. Download newest release.
 2. Extract contents to White Knuckle folder (overwrite if necessary).
 
