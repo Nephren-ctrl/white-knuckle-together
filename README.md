@@ -60,6 +60,8 @@ AI is an extremely polarizing topic, yes, but the reality is that reverse engine
 
 AI is extremely good at decompiling, analyzing, and labeling packaged content and assemblies. It can figure out which triggers activate which events and how interactions resolve in a massive codebase, and it can inject custom code into those locations. I don't want to offend Dark Machine by creating something with these tools, but I think it's the only viable way for me to implement multiplayer in a reasonable amount of time.
 
+Unless you are inherently against AI programming, give it a try before you assume the quality of the mod.
+
 ## Known issues
 
 <details>
