@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "com.unity.scriptablebuildpipeline": "2.5.2"
+  }
+}
