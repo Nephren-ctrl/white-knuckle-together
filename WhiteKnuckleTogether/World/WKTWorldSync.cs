@@ -24,6 +24,7 @@ namespace WhiteKnuckleTogether {
         private const SendType c_state_send_type = SendType.Unreliable | SendType.NoNagle;
         private const string c_runtime_salt = "WKT.RuntimeObject";
         private const string c_drop_salt = "WKT.Drop";
+        private const string c_leave_salt = "WKT.Leave";
         /// <summary>How far, beyond reach, a client's pickup may be from where the host has that client. Covers latency.</summary>
         private const float c_pickup_range = 12f;
         private const string c_hammer_tag = "hammer";
@@ -56,6 +57,8 @@ namespace WhiteKnuckleTogether {
         /// <summary>Host only: keeps the items clients drop from falling out of the world.</summary>
         private readonly WKTDropSettler m_dropSettler = new();
         private uint m_dropCount;
+        /// <summary>Host only: how many items of players who left this machine has dropped, for their keys.</summary>
+        private uint m_leaveDropCount;
         private WKTNetwork m_network = null!;
         private WKTPuppetBinder<WKTNetIdentity> m_binder = null!;
         private Action<M_Level, ulong> m_onLevelKeyed = null!;
@@ -74,7 +77,7 @@ namespace WhiteKnuckleTogether {
         /// <summary>Client only: the key the object being spawned gets, so it binds to the host's object.</summary>
         private ulong m_spawningKey;
         private bool m_registering;
-        /// <summary>Host only: set while spawning a client's drop, which registers once its data is in place.</summary>
+        /// <summary>Host only: set while spawning a dropped item, which registers once its data is in place.</summary>
         private bool m_suppressRegistration;
 
         /// <summary>The world sync of the synced co-op run in progress. Null everywhere else, including singleplayer.</summary>
@@ -105,6 +108,7 @@ namespace WhiteKnuckleTogether {
         public WKTViewerCreatures Viewers { get; private set; } = null!;
         public WKTMotherWrath MotherWrath { get; private set; } = null!;
         public WKTPlayerPerks Perks { get; private set; } = null!;
+        public WKTPlayerInventories Inventories { get; private set; } = null!;
         public WKTEnemyShots EnemyShots { get; private set; } = null!;
         public WKTRecyclers Recyclers { get; private set; } = null!;
         public WKTHazardSync Hazards { get; private set; } = null!;
@@ -142,6 +146,7 @@ namespace WhiteKnuckleTogether {
             Viewers = new WKTViewerCreatures(this, m_network);
             MotherWrath = new WKTMotherWrath(this, m_network);
             Perks = new WKTPlayerPerks(this, m_network);
+            Inventories = new WKTPlayerInventories(this, m_network);
             EnemyShots = new WKTEnemyShots(this, m_network);
             Recyclers = new WKTRecyclers(this, m_network);
             Hazards = new WKTHazardSync(this, m_network);
@@ -219,6 +224,7 @@ namespace WhiteKnuckleTogether {
             messages.Register(WKTMessageId.MotherLine, MotherWrath.OnLine);
             messages.Register(WKTMessageId.EntityInteraction, Events.OnInteraction);
             messages.Register(WKTMessageId.PlayerPerks, Perks.OnPerks);
+            messages.Register(WKTMessageId.PlayerInventory, Inventories.OnInventory);
             m_onPlayerDisconnected = HandlePlayerDisconnected;
             m_network.OnPlayerDisconnected += m_onPlayerDisconnected;
             m_onPlayerConnected = HandlePlayerConnected;
@@ -250,6 +256,7 @@ namespace WhiteKnuckleTogether {
             Viewers.Clear();
             MotherWrath.Clear();
             Perks.Clear();
+            Inventories.Clear();
             EnemyShots.Clear();
             Recyclers.Clear();
             Hazards.Clear();
@@ -314,6 +321,7 @@ namespace WhiteKnuckleTogether {
             messages.Unregister(WKTMessageId.MotherLine);
             messages.Unregister(WKTMessageId.EntityInteraction);
             messages.Unregister(WKTMessageId.PlayerPerks);
+            messages.Unregister(WKTMessageId.PlayerInventory);
             m_network.OnPlayerDisconnected -= m_onPlayerDisconnected;
             m_network.OnPlayerConnected -= m_onPlayerConnected;
             m_network.OnHostChanged -= m_onHostChanged;
@@ -346,6 +354,7 @@ namespace WhiteKnuckleTogether {
             TouchKills.Update(now);
             Viewers.Update(now);
             Perks.Update(now);
+            Inventories.Update(now);
             EnemyShots.Update();
             Hazards.Update();
             WKTSharedMotion.Update();
@@ -605,6 +614,7 @@ namespace WhiteKnuckleTogether {
         private void HandlePlayerConnected(WKTPlayer player) {
             if (!IsHost || player.IsHost) return;
             Perks.SendAllTo(player);
+            Inventories.SendAllTo(player);
             foreach (var identity in m_byHandle.Values) {
                 if (identity == null) continue;
                 WriteBind(identity);
@@ -1503,24 +1513,48 @@ namespace WhiteKnuckleTogether {
 
         private void OnDropRequest(WKTPlayer sender, NetDataReader reader) {
             if (!IsHost || sender.IsHost || !WKTDropRequest.TryRead(reader, m_dropRequest)) return;
+            var position = WKTWorldOffset.FromWire(m_dropRequest.Position, WKTWorldOffset.Get());
+            var dropped = SpawnItem(m_dropRequest.PrefabId, position, m_dropRequest.Rotation, m_dropRequest.Velocity,
+                (m_dropRequest.Flags & WKTDropRequest.FLAG_KINEMATIC) != 0, (m_dropRequest.Flags & WKTDropRequest.FLAG_USED) != 0,
+                m_dropRequest.ItemData, GetDropKey(sender.Id, m_dropRequest.Token));
+            if (dropped != null)
+                Recyclers.OnDropped(dropped.Handle, sender.Id);
+        }
+
+        /// <summary>Host only: drops an item a player who left carried at <paramref name="position"/>, in this machine's world.</summary>
+        public void SpawnLeftItem(WKTInventorySnapshot.Entry item, Vector3 position) {
+            var hostId = m_network.LocalPlayer?.Id ?? 0;
+            // The host's id is mixed in, so a player who takes over never reuses the keys of the old host's drops.
+            var key = c_runtime_bit | WKTStableHash.Mix(WKTStableHash.Mix(WKTStableHash.Of(c_leave_salt), hostId), ++m_leaveDropCount);
+            SpawnItem(item.PrefabId, position, Quaternion.identity, Vector3.zero, false, item.Used, item.Data, key);
+        }
+
+        /// <summary>Client only: whether the host has yet to give the local player <paramref name="item"/>.</summary>
+        public bool IsClaimPending(Item item) => m_claims.IsUnresolved(item);
+
+        /// <summary>
+        /// Host only: spawns an item into the world with its data, registered under <paramref name="key"/> and kept from falling
+        /// out of the world. Null when the prefab is unknown.
+        /// </summary>
+        private WKTNetIdentity? SpawnItem(string prefabId, Vector3 position, Quaternion rotation, Vector3 velocity, bool kinematic, bool used,
+            List<string> itemData, ulong key) {
             Item_Object? prefab = null;
             try {
-                prefab = CL_AssetManager.GetItemObjectPrefab(m_dropRequest.PrefabId);
+                prefab = CL_AssetManager.GetItemObjectPrefab(prefabId);
             }
             catch (Exception) {
                 // Unknown ids throw inside the asset manager.
             }
             if (prefab == null) {
-                LogMissingPrefab(m_dropRequest.PrefabId);
-                return;
+                LogMissingPrefab(prefabId);
+                return null;
             }
-            var position = WKTWorldOffset.FromWire(m_dropRequest.Position, WKTWorldOffset.Get());
             Item_Object instance;
-            // Props register while spawning. They must wait for the item's data and the drop key, or clients would bind a
-            // copy with the prefab's data under a key the dropping client never matches.
+            // Props register while spawning. They must wait for the item's data and the key, or clients would bind a copy
+            // with the prefab's data under a key the dropping client never matches.
             m_suppressRegistration = true;
             try {
-                instance = Instantiate(prefab, position, m_dropRequest.Rotation, GetLevelParent(position));
+                instance = Instantiate(prefab, position, rotation, GetLevelParent(position));
             }
             finally {
                 m_suppressRegistration = false;
@@ -1528,23 +1562,21 @@ namespace WhiteKnuckleTogether {
             instance.transform.localScale = Vector3.one;
             instance.itemData.data ??= new List<string>();
             instance.itemData.data.Clear();
-            instance.itemData.data.AddRange(m_dropRequest.ItemData);
+            instance.itemData.data.AddRange(itemData);
             WKTItemModules.Unpack(instance.itemData);
-            instance.itemData.used = (m_dropRequest.Flags & WKTDropRequest.FLAG_USED) != 0;
+            instance.itemData.used = used;
             if (instance.TryGetComponent<Rigidbody>(out var body)) {
-                var kinematic = (m_dropRequest.Flags & WKTDropRequest.FLAG_KINEMATIC) != 0;
                 body.isKinematic = kinematic;
-                m_dropSettler.Place(body, kinematic, m_dropRequest.Velocity, Time.realtimeSinceStartupAsDouble);
+                m_dropSettler.Place(body, kinematic, velocity, Time.realtimeSinceStartupAsDouble);
             }
-            m_spawningKey = GetDropKey(sender.Id, m_dropRequest.Token);
+            m_spawningKey = key;
             try {
                 Register(instance);
             }
             finally {
                 m_spawningKey = 0;
             }
-            if (instance.TryGetComponent<WKTNetIdentity>(out var dropped))
-                Recyclers.OnDropped(dropped.Handle, sender.Id);
+            return instance.TryGetComponent<WKTNetIdentity>(out var identity) ? identity : null;
         }
 
         /// <summary>The level a position is in, so a spawned object unloads with it. The world loader's root when unknown.</summary>
@@ -1662,6 +1694,7 @@ namespace WhiteKnuckleTogether {
         private void HandlePlayerDisconnected(WKTPlayer player) {
             Authority.OnPlayerLeft(player.Id);
             WKTPlayerPerks.Remove(player.Id);
+            Inventories.OnPlayerLeft(player.Id);
             Viewers.OnPlayerLeft(player.Id);
         }
 
@@ -1691,6 +1724,7 @@ namespace WhiteKnuckleTogether {
             ReturnRebars.OnHostChanged();
             Authority.OnHostChanged();
             Ropes.OnHostChanged();
+            Inventories.OnHostChanged();
             SharedHolds.Clear();
             if (!IsHost) return;
             m_claims.ClearBeforeBind();
