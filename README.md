@@ -27,7 +27,7 @@ Singleplayer is entirely unaffected.
 
 1. Install [BepInEx 5](https://thunderstore.io/c/white-knuckle/p/BepInEx/BepInExPack/) (BepInExPack 5.4.2305) into your White Knuckle folder and launch the game once.
 2. Download the latest zip from [Releases](https://github.com/Nephren-ctrl/WKT/releases).
-3. Extract it into `White Knuckle/BepInEx/plugins/WhiteKnuckleTogether/`. The folder should contain `WhiteKnuckleTogether.dll`, `opus.dll` and `wkt.bundle`.
+3. Extract it into `White Knuckle/BepInEx/plugins/`. Inside the plugins folder, there should be a folder called `WhiteKnuckleTogether` containing `WhiteKnuckleTogether.dll`, `opus.dll` and `wkt.bundle`.
 4. Launch the game. Multiplayer is in the play menu.
 
 ## Notes
