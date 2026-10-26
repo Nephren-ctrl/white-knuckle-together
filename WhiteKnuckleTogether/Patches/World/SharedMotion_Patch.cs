@@ -9,6 +9,19 @@ namespace WhiteKnuckleTogether {
         private static void Postfix(UT_PathMover __instance) => WKTSharedMotion.AfterMoverAwake(__instance);
     }
 
+    /// <summary>A Delta Labs security field switches off once it reached the top of its room (see <see cref="WKTSharedMotion"/>).</summary>
+    [WKTCriticalPatch(WKTPatchCategory.WorldSync), HarmonyPatch(typeof(UT_PathMover), "ArriveAtNode")]
+    internal sealed class SecurityFieldEnd_Patch {
+        [UsedImplicitly]
+        private static void Prefix(UT_PathMover __instance, out bool __state) => __state = WKTSharedMotion.IsFieldReachingEnd(__instance);
+
+        [UsedImplicitly]
+        private static void Postfix(UT_PathMover __instance, bool __state) {
+            if (__state)
+                WKTSharedMotion.OnFieldReachedEnd(__instance);
+        }
+    }
+
     /// <summary>Spinners at full speed take their angle from the shared clock.</summary>
     [WKTCriticalPatch(WKTPatchCategory.WorldSync), HarmonyPatch(typeof(UT_Spin), "Update")]
     internal sealed class SpinPhase_Patch {

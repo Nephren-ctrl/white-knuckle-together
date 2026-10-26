@@ -19,7 +19,7 @@ namespace WhiteKnuckleTogether {
         private static readonly string[] s_localTypeNames = {
             nameof(ENT_Player), nameof(Inventory), nameof(CL_UIManager), nameof(CL_CameraControl), nameof(FXManager),
             nameof(UT_ZoneTitler), nameof(UT_AudioActivationZone), nameof(UT_CameraTakeover), nameof(UT_ItemDumper),
-            nameof(UT_Teleport), nameof(UT_SeamlessTeleporter)
+            nameof(UT_Teleport), nameof(UT_SeamlessTeleporter), nameof(ENV_JumpPad)
         };
         /// <summary>
         /// <c>OS_</c> is the in-world computers: using one moves, locks and films the local player, so it opens only for whoever

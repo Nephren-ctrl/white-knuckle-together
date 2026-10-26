@@ -230,10 +230,17 @@ namespace WhiteKnuckleTogether {
         /// <summary>Replaces <c>entity.SetGrappled(b, grappler)</c>.</summary>
         public static void SetGrappledVia(GameEntity entity, bool b, AIGameEntity.Grappler grappler, Component? self) {
             if (TryGetRemote(self, out var proxy) && IsLocalPlayer(entity))
-                SendEffect(proxy!.PlayerId, new WKTPlayerEffect(WKTPlayerEffectId.SetGrappled, flag: b), self);
+                SendEffect(proxy!.PlayerId, new WKTPlayerEffect(WKTPlayerEffectId.SetGrappled, flag: b, handle: HandleOf(grappler)), self);
             else
                 entity.SetGrappled(b, grappler);
         }
+
+        /// <summary>
+        /// A grappler's world handle, so the grappled player's machine adds its copy of the grappler too. How hard the player is
+        /// held (drag, gravity, leaving the ground) comes from the grapplers holding them.
+        /// </summary>
+        private static ushort HandleOf(AIGameEntity.Grappler? grappler) =>
+            grappler is Component component && component != null && component.TryGetComponent<WKTNetIdentity>(out var identity) ? identity.Handle : (ushort)0;
 
         public static bool IsHanging(ENT_Player player, Component? self) {
             if (!TryGetRemote(self, out var proxy)) return player.IsHanging();
@@ -396,7 +403,9 @@ namespace WhiteKnuckleTogether {
                     player.SplatterScreenBlood(Mathf.RoundToInt(effect.Amount));
                     break;
                 case WKTPlayerEffectId.SetGrappled:
-                    player.SetGrappled(effect.Flag);
+                    WKTNetIdentity? grappler = null;
+                    WKTWorldSync.Instance?.TryGetIdentity(effect.Handle, out grappler);
+                    player.SetGrappled(effect.Flag, grappler != null ? grappler.Entity as AIGameEntity.Grappler : null);
                     break;
                 case WKTPlayerEffectId.AddForce:
                     player.AddForce(effect.Vector, effect.Flag ? c_resisted_source : string.Empty);

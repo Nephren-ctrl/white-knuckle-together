@@ -36,6 +36,8 @@ namespace WhiteKnuckleTogether {
         /// <summary>Host: every button's last state. Client: the host's states for buttons not indexed yet.</summary>
         private readonly Dictionary<ulong, WKTButtonState> m_states = new();
         private readonly Dictionary<int, bool> m_startsMover = new();
+        /// <summary>By button instance id, whether it sets off a security field (see <see cref="WKTGatherCheck.IsPassStart"/>).</summary>
+        private readonly Dictionary<int, bool> m_passStarts = new();
         /// <summary>By button instance id, what the listed buttons wait for.</summary>
         private readonly Dictionary<int, Gather> m_gathers = new();
         private readonly List<(string Path, float Radius, string? Zone)> m_gatherScratch = new();
@@ -96,6 +98,7 @@ namespace WhiteKnuckleTogether {
                 if (button == null) continue;
                 var id = button.GetInstanceID();
                 m_startsMover.Remove(id);
+                m_passStarts.Remove(id);
                 m_gathers.Remove(id);
                 if (m_keys.Remove(id, out var key))
                     m_buttons.Remove(key);
@@ -160,6 +163,8 @@ namespace WhiteKnuckleTogether {
         public bool AllowPress(CL_Button button) {
             if (m_network.Session.IsRace) return true;
             if (!m_oneWayDoors.AllowPress(button)) return false;
+            // A security field's button presses once everyone is up on its floor, without a word: the last one up presses it.
+            if (IsPassStart(button) && !WKTGatherCheck.AllAbove(WKTGatherCheck.GetPassHeight(button))) return false;
             if (!TryGetGather(button, out var gather) || gather.IsMet(button, out _, out _)) return true;
             m_noticeButton = button;
             m_noticeGather = gather;
@@ -182,6 +187,15 @@ namespace WhiteKnuckleTogether {
             if (m_gathers.TryGetValue(button.GetInstanceID(), out gather)) return true;
             gather = new Gather(MOVER_GATHER_RADIUS, null);
             return StartsMover(button);
+        }
+
+        private bool IsPassStart(CL_Button button) {
+            var id = button.GetInstanceID();
+            if (m_passStarts.TryGetValue(id, out var passStart)) return passStart;
+            var level = button.GetComponentInParent<M_Level>(true);
+            passStart = level != null && WKTGatherCheck.IsPassStart(level.name, WKTGatherCheck.PathBelow(button.transform, level.transform));
+            m_passStarts[id] = passStart;
+            return passStart;
         }
 
         private bool StartsMover(CL_Button button) {

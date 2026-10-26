@@ -18,6 +18,11 @@ namespace WhiteKnuckleTogether {
         private readonly Dictionary<int, Resolved> m_resolved = new();
         /// <summary>Each entity's clip handlers, in <c>GetComponentsInChildren</c> order, by the identity's instance id.</summary>
         private readonly Dictionary<int, UT_AudioClipHandler[]> m_handlers = new();
+        /// <summary>
+        /// The entity of each clip handler outside it, on a model beside it, by the handler's instance id. Instance ids are never
+        /// reused, so entries of despawned entities are only dropped with the rest at <see cref="Clear"/>.
+        /// </summary>
+        private readonly Dictionary<int, WKTNetIdentity> m_beside = new();
 
         public WKTEntitySounds(WKTWorldSync sync, WKTNetwork network) {
             m_sync = sync;
@@ -71,11 +76,29 @@ namespace WhiteKnuckleTogether {
             SendNear(new WKTEntitySound(resolved.Identity.Handle, resolved.Index, WKTEntitySoundKind.Play, group, set), resolved.Identity.transform.position, except);
         }
 
+        /// <summary>A newly registered entity whose model, with its clip handlers, sits beside it: those handlers are its own.</summary>
+        public void Register(WKTNetIdentity identity) {
+            var root = GetSoundRoot(identity);
+            if (root == identity.transform) return;
+            foreach (var handler in root.GetComponentsInChildren<UT_AudioClipHandler>(true))
+                m_beside[handler.GetInstanceID()] = identity;
+        }
+
         public void Forget(WKTNetIdentity identity) => m_handlers.Remove(identity.GetInstanceID());
 
         public void Clear() {
             m_resolved.Clear();
             m_handlers.Clear();
+            m_beside.Clear();
+        }
+
+        /// <summary>
+        /// Where an entity's clip handlers are: under itself, or for the Teeth under the prefab root it shares with its model
+        /// (<c>DEN_Teeth/GEO_Root</c> beside <c>DEN_Teeth/DEN_Teeth_Controller</c>).
+        /// </summary>
+        private static Transform GetSoundRoot(WKTNetIdentity identity) {
+            var own = identity.transform;
+            return identity.Entity is DEN_Teeth && own.parent != null ? own.parent : own;
         }
 
         /// <summary>The entity a handler belongs to. Looked up again when the entity it was cached with is gone or was unbound.</summary>
@@ -83,6 +106,8 @@ namespace WhiteKnuckleTogether {
             var id = handler.GetInstanceID();
             if (m_resolved.TryGetValue(id, out var cached) && cached.Identity != null && cached.Identity.Handle != 0) return cached;
             var identity = handler.GetComponentInParent<WKTNetIdentity>(true);
+            if (identity == null)
+                m_beside.TryGetValue(id, out identity);
             if (identity == null || identity.Handle == 0) return default;
             var index = System.Array.IndexOf(GetHandlers(identity), handler);
             if (index < 0 || index > byte.MaxValue) return default;
@@ -94,7 +119,7 @@ namespace WhiteKnuckleTogether {
         private UT_AudioClipHandler[] GetHandlers(WKTNetIdentity identity) {
             var id = identity.GetInstanceID();
             if (m_handlers.TryGetValue(id, out var handlers)) return handlers;
-            handlers = identity.GetComponentsInChildren<UT_AudioClipHandler>(true);
+            handlers = GetSoundRoot(identity).GetComponentsInChildren<UT_AudioClipHandler>(true);
             m_handlers[id] = handlers;
             return handlers;
         }

@@ -440,6 +440,7 @@ namespace WhiteKnuckleTogether {
             identity.SelfDriven = WKTAmbientMotion.IsSelfDriven(ownerObject);
             Events.Index(identity);
             Presentation.Register(identity);
+            Sounds.Register(identity);
             Viewers.Register(identity);
             identity.NestedIn = identity.Item == null ? FindNestingIdentity(ownerObject) : null;
             var hasKey = TryGetKey(identity, out var key);
@@ -1021,7 +1022,7 @@ namespace WhiteKnuckleTogether {
                 identity.Item.itemData.data ??= new List<string>();
                 identity.Item.itemData.data.Clear();
                 identity.Item.itemData.data.AddRange(bind.ItemData);
-                WKTItemModules.Unpack(identity.Item.itemData);
+                WKTItemModules.Unpack(identity.Item.itemData, identity.Item);
             }
             return identity;
         }
@@ -1568,7 +1569,7 @@ namespace WhiteKnuckleTogether {
             instance.itemData.data ??= new List<string>();
             instance.itemData.data.Clear();
             instance.itemData.data.AddRange(itemData);
-            WKTItemModules.Unpack(instance.itemData);
+            WKTItemModules.Unpack(instance.itemData, instance);
             instance.itemData.used = used;
             if (instance.TryGetComponent<Rigidbody>(out var body)) {
                 body.isKinematic = kinematic;
@@ -1584,8 +1585,12 @@ namespace WhiteKnuckleTogether {
             return instance.TryGetComponent<WKTNetIdentity>(out var identity) ? identity : null;
         }
 
-        /// <summary>The level a position is in, so a spawned object unloads with it. The world loader's root when unknown.</summary>
+        /// <summary>
+        /// The level a position is in, so a spawned object unloads with it. The world loader's root when unknown, and the chamber
+        /// while the host is in one, as the levels are hidden then (everyone is taken in together).
+        /// </summary>
         private static Transform? GetLevelParent(Vector3 position) {
+            if (WKTPlayerRooms.IsInChamber()) return WorldLoader.GetCurrentLevelParentRoot();
             var levels = WorldLoader.instance != null ? WorldLoader.instance.GetCurrentBranch()?.levelTracker : null;
             var level = levels != null ? WKTHostStreaming.FindClosestLevel(levels, position)?.GetLevel() : null;
             return level != null ? level.transform : WorldLoader.GetCurrentLevelParentRoot();

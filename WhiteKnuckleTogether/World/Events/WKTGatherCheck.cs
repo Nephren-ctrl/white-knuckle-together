@@ -32,6 +32,10 @@ namespace WhiteKnuckleTogether {
         public const string WAIT_NEAR = "Waiting for everyone to come close";
         /// <summary>How close to a listed button (see <see cref="s_gatheredButtons"/>) every living player must be for it to press.</summary>
         public const float BUTTON_RADIUS = 15f;
+        /// <summary>How far under a security field's start button (see <see cref="s_passStarts"/>) a player has still passed it: on its floor.</summary>
+        public const float PASS_BUTTON_BELOW = 3f;
+        /// <summary>How far under a security field's trigger box a player has still passed it: a capsule reaching into its floor.</summary>
+        public const float PASS_ZONE_BELOW = 1f;
         private const float c_capsule_radius = 0.3f;
         private const float c_capsule_height = 1.6f;
         private const string c_generate = nameof(UT_BranchGenerator.Generate);
@@ -106,6 +110,44 @@ namespace WhiteKnuckleTogether {
             ("Campaign_Interlude_Habitation_To_Abyss", "Exterior/M4_Interlude_Collapse_Anim.01/Tram_Interfacility_Offline_Front_01/Prop_Button_03.01", BUTTON_RADIUS, null),
             ("Campaign_Interlude_Sink_To_Pipeworks", "Scripting/Buttons/Button_Main_Seal", 0f, "UT_SpeedrunTracker")
         };
+
+        /// <summary>
+        /// The Delta Labs security fields, by level and the path of the input that sets one off: a trigger (Lab_03 and Lab_05, in
+        /// hard mode) or a button (Lab_08) switches on a field that kills on touch and, a few seconds on, a path mover raises it
+        /// up the room. Each goes off only once every living player has passed it, so nobody is left under the field: a
+        /// trigger fires for whoever walks in last, once everyone is above its box's floor, and the button presses once everyone
+        /// is up on its floor. Nothing waits or says so: the last one through sets it off.
+        /// </summary>
+        private static readonly (string Level, string Path)[] s_passStarts = {
+            ("M3_Habitation_Lab_03", "Hardmode_Event_MovingSecurityZone"),
+            ("M3_Habitation_Lab_05", "Hardmode_Event_MovingSecurityZone"),
+            ("M3_Habitation_Lab_08", "Security Zone/Prop_Button_03_Start")
+        };
+
+        /// <summary>Whether a level input sets off a security field (see <see cref="s_passStarts"/>), by its whole path below the level.</summary>
+        public static bool IsPassStart(string levelName, string inputPath) {
+            foreach (var (level, path) in s_passStarts) {
+                if (levelName.StartsWith(level, StringComparison.Ordinal) && inputPath == path) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// The height every living player must be above for a security field's input to go off: the floor of a trigger's box,
+        /// or a little under a button. Read when it is set off, as the world's origin moves.
+        /// </summary>
+        public static float GetPassHeight(Component input) {
+            if (input is UT_TriggerZone && input.TryGetComponent<BoxCollider>(out var box))
+                return box.transform.TransformPoint(box.center - new Vector3(0f, box.size.y * 0.5f, 0f)).y - PASS_ZONE_BELOW;
+            return input.transform.position.y - PASS_BUTTON_BELOW;
+        }
+
+        /// <summary>Whether every living player is above <paramref name="height"/>.</summary>
+        public static bool AllAbove(float height) {
+            Span<Vector3> positions = stackalloc Vector3[WKTLobbyConsts.MAX_PLAYERS + 1];
+            var living = LivingPositions(positions);
+            return WKTOneWayDoors.CountAbove(positions.Slice(0, living), height) >= living;
+        }
 
         /// <summary>
         /// Adds to <paramref name="buttons"/> the buttons of a level whose press waits for everyone (see

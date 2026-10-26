@@ -235,7 +235,8 @@ namespace WhiteKnuckleTogether {
 
         public void OnEntityGrab(WKTPlayer sender, NetDataReader reader) {
             if (!m_sync.IsHost || sender.IsHost || !WKTEntityGrab.TryRead(reader, out var grab)) return;
-            if (!m_sync.TryGetIdentity(grab.Handle, out var identity) || identity!.Entity == null || identity.Entity.dead) {
+            // A dead creature stays where it fell, but a dead prop, such as a turret knocked over, can still be carried.
+            if (!m_sync.TryGetIdentity(grab.Handle, out var identity) || identity!.Entity == null || (identity.Entity.dead && identity.Prop == null)) {
                 SendCurrent(sender, grab.Handle);
                 return;
             }

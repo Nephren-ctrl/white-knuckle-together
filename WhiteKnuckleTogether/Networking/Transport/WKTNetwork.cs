@@ -1075,8 +1075,17 @@ namespace WhiteKnuckleTogether {
         }
 
         private void OnLobbyMemberLeft(Lobby lobby, Friend member) {
-            if (Mode != NetworkMode.Host || m_server == null || !m_lobbyExists || lobby.Id != m_lobby.Id) return;
-            m_server.Kick(member.Id);
+            if (!m_lobbyExists || lobby.Id != m_lobby.Id) return;
+            if (Mode == NetworkMode.Host && m_server != null) {
+                m_server.Kick(member.Id);
+                return;
+            }
+            // The host left the lobby: whatever it last sent may never arrive, as leaving closes its socket at once, so this
+            // client stops waiting for its connection to time out and goes on to the next host right away.
+            if (Mode != NetworkMode.Client || m_migration.IsActive || m_client?.HostPlayer is not { } host || host.friend.Id != member.Id) return;
+            WKT.Instance.Logger.LogInfo($"Host {member.Name} left the lobby.");
+            CloseConnection();
+            OnClientDisconnected();
         }
 
         /// <summary>

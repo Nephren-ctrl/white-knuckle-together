@@ -28,6 +28,8 @@ namespace WhiteKnuckleTogether {
         private static readonly AccessTools.FieldRef<UT_Spin, Vector3> s_spinRate = AccessTools.FieldRefAccess<UT_Spin, Vector3>("curRotate");
         private static readonly AccessTools.FieldRef<UT_Spin, Quaternion> s_spinStart = AccessTools.FieldRefAccess<UT_Spin, Quaternion>("initialRotation");
         private static readonly AccessTools.FieldRef<UT_Spin, int> s_spinDirection = AccessTools.FieldRefAccess<UT_Spin, int>("dir");
+        /// <summary>The name ending of the movers that raise Delta Labs' security fields (see <see cref="WKTGatherCheck.IsPassStart"/>).</summary>
+        private const string c_security_field_mover = "MovingSecurityZone";
         /// <summary>Movers that woke before the clock was known, to phase once it is.</summary>
         private static readonly HashSet<UT_PathMover> s_unphased = new();
         private static readonly Dictionary<int, Quaternion> s_gearStarts = new();
@@ -49,6 +51,23 @@ namespace WhiteKnuckleTogether {
         /// wait to be started (a button's <c>StartMove</c>) keep the game's own start, so every machine starts them from the same
         /// place when the start reaches it.
         /// </summary>
+        /// <summary>
+        /// Whether a security field's mover is about to reach the last node of its path: the top of Lab_08's room, or the bottom
+        /// of the hard mode rooms', which it sweeps down from the top. Its loop would take it back the other way.
+        /// </summary>
+        public static bool IsFieldReachingEnd(UT_PathMover mover) =>
+            IsActive && s_moverIndex(mover) == mover.pathPoints.Count - 1 && mover.name.EndsWith(c_security_field_mover, StringComparison.Ordinal);
+
+        /// <summary>
+        /// A security field swept its room once. It stops and switches off there rather than going back the other way, so
+        /// nobody climbing after it is trapped by it or caught on its way back. Every machine moves its own copy the same way.
+        /// </summary>
+        public static void OnFieldReachedEnd(UT_PathMover mover) {
+            mover.active = false;
+            if (mover.moveObject != null)
+                mover.moveObject.gameObject.SetActive(false);
+        }
+
         public static void AfterMoverAwake(UT_PathMover mover) {
             if (!IsActive || !mover.loop || !mover.active) return;
             if (!WKTSharedClock.IsReady) {

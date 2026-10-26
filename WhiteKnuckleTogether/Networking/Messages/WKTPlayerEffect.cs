@@ -16,15 +16,18 @@ namespace WhiteKnuckleTogether {
         public Vector3 Vector { get; }
         public bool Flag { get; }
         public string Text { get; }
+        /// <summary>The world object behind the effect, such as the creature grappling the player; 0 for none.</summary>
+        public ushort Handle { get; }
 
         public WKTPlayerEffect(WKTPlayerEffectId effect, float amount = 0f, Vector3 position = default, Vector3 vector = default, bool flag = false,
-                               string? text = null) {
+                               string? text = null, ushort handle = 0) {
             Effect = effect;
             Amount = amount;
             Position = position;
             Vector = vector;
             Flag = flag;
             Text = text ?? string.Empty;
+            Handle = handle;
         }
 
         public void Write(NetDataWriter writer) {
@@ -34,6 +37,7 @@ namespace WhiteKnuckleTogether {
             WKTWire.Put(writer, Vector);
             writer.Put(Flag);
             writer.Put(Text, WKTWire.MAX_ID_LENGTH);
+            writer.Put(Handle);
         }
 
         /// <summary>Fails on truncation, unknown effects, non-finite or out-of-range values and overlong text.</summary>
@@ -43,8 +47,8 @@ namespace WhiteKnuckleTogether {
             if (!reader.TryGetFloat(out var amount) || float.IsNaN(amount) || Math.Abs(amount) > WKTWire.MAX_AMOUNT) return false;
             if (!WKTWire.TryGetPosition(reader, out var position) || !WKTWire.TryGetPosition(reader, out var vector)) return false;
             if (!reader.TryGetByte(out var flag) || flag > 1) return false;
-            if (!WKTReaderUtility.TryGetBoundedString(reader, WKTWire.MAX_ID_LENGTH, out var text)) return false;
-            effect = new WKTPlayerEffect((WKTPlayerEffectId)id, amount, position, vector, flag == 1, text);
+            if (!WKTReaderUtility.TryGetBoundedString(reader, WKTWire.MAX_ID_LENGTH, out var text) || !reader.TryGetUShort(out var handle)) return false;
+            effect = new WKTPlayerEffect((WKTPlayerEffectId)id, amount, position, vector, flag == 1, text, handle);
             return true;
         }
 

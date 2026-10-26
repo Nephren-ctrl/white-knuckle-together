@@ -270,7 +270,8 @@ namespace WhiteKnuckleTogether {
                 var zoneOwner = zonePath != null ? level.transform.Find(zonePath) : input.transform;
                 var gatherZone = inZone && zoneOwner != null && zoneOwner.TryGetComponent<BoxCollider>(out var box) ? box : null;
                 var reference = new EventRef(key, (byte)index, unityEvent, input, masks, name, levelId, WKTGatherCheck.WaitsForGroup(listed, buildsBranch, masks),
-                    buildsBranch, drivesGoo, gatherZone, below, WKTGatherCheck.IsLoading(unityEvent), WKTGatherCheck.GetLoadPull(unityEvent));
+                    buildsBranch, drivesGoo, gatherZone, below, WKTGatherCheck.IsLoading(unityEvent), WKTGatherCheck.GetLoadPull(unityEvent),
+                    input is UT_TriggerZone && WKTGatherCheck.IsPassStart(level.name, WKTGatherCheck.PathBelow(input.transform, level.transform)));
                 m_events[unityEvent] = reference;
                 m_eventsByKey[(key, (byte)index)] = reference;
             }
@@ -442,6 +443,8 @@ namespace WhiteKnuckleTogether {
         /// </summary>
         public bool OnInvoke(UnityEventBase unityEvent, Transform? argument) {
             if (IsApplying || !m_events.TryGetValue(unityEvent, out var reference)) return true;
+            // A security field goes off only for whoever passes its trigger last (see WKTGatherCheck.IsPassStart).
+            if (reference.PassStart && !m_network.Session.IsRace && !WKTGatherCheck.AllAbove(WKTGatherCheck.GetPassHeight(reference.Owner))) return false;
             if (reference.LoadPull != WKTLoadPull.None)
                 PullForLoading(reference, argument);
             // Racers never wait for, or are pulled to, whoever got there first.
@@ -452,8 +455,10 @@ namespace WhiteKnuckleTogether {
             // A room's door shuts for good once everyone was in: walking through its trigger again later waits for nobody.
             if (reference.Zone != null && m_groupStarts.ContainsKey((reference.Key, reference.Index))) return Dispatch(reference, argument);
             if (!IsGathered(reference, out _, out _)) {
-                if (!IsWaiting(reference))
+                if (!IsWaiting(reference)) {
                     m_waiting.Add((reference, argument));
+                    WKT.Instance.Logger.LogInfo($"{reference.Owner.name} ({reference.FieldName}) waits for everyone {(reference.Zone != null ? "in its room" : "nearby")}.");
+                }
                 return false;
             }
             return StartGroup(reference, argument);
@@ -539,7 +544,8 @@ namespace WhiteKnuckleTogether {
         /// <summary>
         /// Each group start the local player set off runs once everyone is near, even when its trigger only fires once. It is
         /// dropped if the local player dies, or walks off from one gathered around them; one gathered in a room keeps waiting
-        /// however the local player comes and goes, as its door must still close once everyone is in.
+        /// however the local player comes and goes, as its door must still close once everyone is in. The wait panel only
+        /// counts a room while the local player is in it: from anywhere else its count reads as nobody, even with everyone close.
         /// </summary>
         private void UpdateWaitingStarts() {
             for (var i = m_waiting.Count - 1; i >= 0; i--) {
@@ -551,7 +557,10 @@ namespace WhiteKnuckleTogether {
                     continue;
                 }
                 if (!IsGathered(reference, out var near, out var living)) {
-                    WKTWaitHud.Report(reference.Zone != null ? WKTGatherCheck.WAIT_IN_ROOM : WKTGatherCheck.WAIT_NEAR, near, living);
+                    if (reference.Zone == null)
+                        WKTWaitHud.Report(WKTGatherCheck.WAIT_NEAR, near, living);
+                    else if (WKTGatherCheck.IsInZone(reference.Zone, local.transform.position, reference.ZoneBelow))
+                        WKTWaitHud.Report(WKTGatherCheck.WAIT_IN_ROOM, near, living);
                     continue;
                 }
                 m_waiting.RemoveAt(i);
@@ -927,11 +936,14 @@ namespace WhiteKnuckleTogether {
             public readonly bool Loads;
             /// <summary>Whom it brings to whoever set it off (see <see cref="WKTGatherCheck.GetLoadPull(UnityEventBase)"/>).</summary>
             public readonly WKTLoadPull LoadPull;
+            /// <summary>Sets off a security field, so only goes off once everyone passed its trigger (see <see cref="WKTGatherCheck.IsPassStart"/>).</summary>
+            public readonly bool PassStart;
 
             public EventRef(ulong key, byte index, UnityEventBase unityEvent, MonoBehaviour owner, WKTListenerMasks masks, string fieldName, int levelId,
                             bool groupStart = false, bool pullsGroup = false, bool drivesGoo = false, BoxCollider? zone = null, float zoneBelow = 0f,
-                            bool loads = false, WKTLoadPull loadPull = WKTLoadPull.None) {
+                            bool loads = false, WKTLoadPull loadPull = WKTLoadPull.None, bool passStart = false) {
                 GroupStart = groupStart;
+                PassStart = passStart;
                 Loads = loads;
                 LoadPull = loadPull;
                 Zone = zone;

@@ -61,4 +61,20 @@ namespace WhiteKnuckleTogether {
             return list;
         }
     }
+
+    /// <summary>
+    /// The local player shaking off a Vent Thing another machine simulates (a teleport clears every grapple) only lets go of
+    /// its copy here: the copy must not drop its target, and the simulating machine grabs again or lets go itself.
+    /// </summary>
+    [WKTCriticalPatch(WKTPatchCategory.WorldSync), HarmonyPatch(typeof(DEN_VentThing), nameof(DEN_VentThing.ReleaseGrapple))]
+    internal sealed class VentThingRelease_Patch {
+        [UsedImplicitly]
+        private static bool Prefix(DEN_VentThing __instance) {
+            if (!WKTWorldSync.IsPuppet(__instance)) return true;
+            var player = ENT_Player.playerObject;
+            if (player != null)
+                player.SetGrappled(false, __instance);
+            return false;
+        }
+    }
 }
