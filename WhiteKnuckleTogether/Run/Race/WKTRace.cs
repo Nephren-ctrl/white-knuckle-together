@@ -13,11 +13,15 @@ namespace WhiteKnuckleTogether {
     /// they stay out. Nobody is revived. The last player alive wins, or the first to finish the run. Every player then sees
     /// the end of the run with the winner named.
     /// <para>
+    /// The same orb keeps a co-op group together with <see cref="ModifierId.KeepTogether"/>: it follows the middle of the
+    /// living players instead, and nobody wins; the run ends as co-op's does.
+    /// </para>
+    /// <para>
     /// The host moves the orb and decides the winner; each machine hurts only its own player, as with all damage. The orb's
     /// center travels in wire space, so it sits in the same place for everyone whatever their world offset, instanced or
     /// not (instanced players climb identical worlds).
     /// </para>
-    /// Lives next to <see cref="WKTRunController"/> in a race only.
+    /// Lives next to <see cref="WKTRunController"/> in a race, or a co-op run keeping together.
     /// </summary>
     internal sealed class WKTRace : MonoBehaviour {
         private const float c_send_interval = 0.1f;
@@ -41,6 +45,8 @@ namespace WhiteKnuckleTogether {
         private int m_started;
         private bool m_hasCenter;
         private bool m_over;
+        /// <summary>A race, rather than a co-op group kept together, which has no winner.</summary>
+        private bool m_isRace;
         /// <summary>Whom this machine saw die, in order, for the places shown at the end.</summary>
         private readonly List<byte> m_eliminated = new();
         private readonly bool[] m_seenDead = new bool[byte.MaxValue + 1];
@@ -56,6 +62,7 @@ namespace WhiteKnuckleTogether {
         private void Awake() {
             Instance = this;
             m_network = WKT.Instance.Network;
+            m_isRace = m_network.Session.IsRace;
             var run = m_network.Session.Run;
             m_radius = WKTRaceRules.GetRadius(run.OrbRadius);
             m_started = run.SlotCount;
@@ -65,7 +72,7 @@ namespace WhiteKnuckleTogether {
             m_network.Messages.Register(WKTMessageId.RaceOrb, OnOrbMessage);
             m_network.Messages.Register(WKTMessageId.RaceFinish, OnFinishMessage);
             m_network.Messages.Register(WKTMessageId.RaceOver, OnOverMessage);
-            WKT.Instance.Logger.LogInfo($"Racing with an orb of {m_radius} m among {m_started} players.");
+            WKT.Instance.Logger.LogInfo($"{(m_isRace ? "Racing" : "Keeping together")} with an orb of {m_radius} m among {m_started} players.");
         }
 
         [UsedImplicitly]
@@ -100,7 +107,7 @@ namespace WhiteKnuckleTogether {
             if (isHost && Time.unscaledTime >= m_nextSend)
                 SendOrb();
             UpdateLocalPlayer(player);
-            if (isHost)
+            if (isHost && m_isRace)
                 CheckElimination();
         }
 
@@ -110,7 +117,7 @@ namespace WhiteKnuckleTogether {
         /// </summary>
         public static bool TryHandleFinish() {
             var race = Instance;
-            if (race == null) return false;
+            if (race == null || !race.m_isRace) return false;
             if (race.m_over) return true;
             var local = race.m_network.LocalPlayer;
             if (local == null) return true;
@@ -123,24 +130,26 @@ namespace WhiteKnuckleTogether {
 
         #region Orb
 
-        /// <summary>Host only: the orb's target is the highest living player.</summary>
+        /// <summary>Host only: the orb's target is the highest living player in a race, else the middle of the living players.</summary>
         private void UpdateLeader(ENT_Player player) {
             var local = m_network.LocalPlayer;
-            var found = false;
+            var count = 0;
             var leader = Vector3.zero;
+            var sum = Vector3.zero;
             if (local != null && !WKTPlayerDeaths.IsDead(local.Id)) {
                 leader = player.transform.position;
-                found = true;
+                sum = leader;
+                count = 1;
             }
             for (var i = 0; i < WKTPlayerPositions.RemoteCount; i++) {
                 if (WKTPlayerPositions.IsRemoteDead(i) || WKTPlayerDeaths.IsDead(WKTPlayerPositions.GetRemoteId(i))) continue;
                 var position = WKTPlayerPositions.GetRemotePosition(i);
-                if (found && position.y <= leader.y) continue;
+                sum += position;
+                if (count++ > 0 && position.y <= leader.y) continue;
                 leader = position;
-                found = true;
             }
-            if (!found) return;
-            m_target = leader + Vector3.up * WKTRaceRules.CENTER_HEIGHT;
+            if (count == 0) return;
+            m_target = (m_isRace ? leader : sum / count) + Vector3.up * WKTRaceRules.CENTER_HEIGHT;
             if (m_hasCenter) return;
             m_hasCenter = true;
             m_center = m_target;

@@ -4,7 +4,7 @@ namespace WhiteKnuckleTogether {
     /// that mode's defaults; settings a mode does not have are hidden in the lobby and never apply to its runs.
     /// </summary>
     internal static class WKTPlayModeDefaults {
-        private static readonly ModifierId[] s_coopOnly = { ModifierId.GrabAssists, ModifierId.ShareRoaches };
+        private static readonly ModifierId[] s_coopOnly = { ModifierId.GrabAssists, ModifierId.ShareRoaches, ModifierId.KeepTogether };
 
         /// <summary>The race orb's size a mode starts at.</summary>
         public static OrbRadiusId DefaultOrbRadius => OrbRadiusId.Medium;
@@ -37,6 +37,8 @@ namespace WhiteKnuckleTogether {
                     return mode == PlayModeId.Coop;
                 case ModifierId.InstancedArtifacts:
                     return true;
+                case ModifierId.KeepTogether:
+                    return false;
                 default:
                     hasDefault = false;
                     return false;

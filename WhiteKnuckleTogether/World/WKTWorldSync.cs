@@ -197,6 +197,7 @@ namespace WhiteKnuckleTogether {
             messages.Register(WKTMessageId.VentOpened, Ladder.OnVentOpened);
             messages.Register(WKTMessageId.LadderNightmare, Ladder.OnNightmareAttack);
             messages.Register(WKTMessageId.ItemConsume, OnItemConsume);
+            messages.Register(WKTMessageId.ItemPaid, OnItemPaid);
             messages.Register(WKTMessageId.TongueState, Tongues.OnTongueEvent);
             messages.Register(WKTMessageId.PlayerHit, OnPlayerHit);
             messages.Register(WKTMessageId.AttackPerformed, EnemyHits.OnAttackEvent);
@@ -295,6 +296,7 @@ namespace WhiteKnuckleTogether {
             messages.Unregister(WKTMessageId.VentOpened);
             messages.Unregister(WKTMessageId.LadderNightmare);
             messages.Unregister(WKTMessageId.ItemConsume);
+            messages.Unregister(WKTMessageId.ItemPaid);
             messages.Unregister(WKTMessageId.TongueState);
             messages.Unregister(WKTMessageId.PlayerHit);
             messages.Unregister(WKTMessageId.AttackPerformed);
@@ -421,6 +423,8 @@ namespace WhiteKnuckleTogether {
             // Levels are briefly enabled while generating, before they are keyed. Their objects register the next time
             // they are enabled, once every machine can tell them apart.
             if (level != null && !WKTContentSeeding.TryGetLevelKey(level, out levelKey) && m_spawningKey == 0) return;
+            if (level == null && IsInChamber(ownerObject))
+                levelKey = WKTPlayerRooms.CHAMBER;
             m_registering = true;
             WKTNetIdentity identity;
             try {
@@ -557,6 +561,19 @@ namespace WhiteKnuckleTogether {
         }
 
         /// <summary>
+        /// Host only: binds an object to clients again as it is now, for one the game finished setting up after it registered,
+        /// such as Bazaar stock tagged for sale only once it was made.
+        /// </summary>
+        public void Rebind(WKTNetIdentity identity) {
+            if (!IsHost || identity.Handle == 0) return;
+            UpdateLevelKey(identity);
+            WriteBind(identity);
+            var writer = m_network.BeginMessage(WKTMessageId.EntityBind);
+            m_bind.Write(writer);
+            m_network.Broadcast(writer, SendType.Reliable);
+        }
+
+        /// <summary>
         /// Host only: tells clients when an object enters or leaves the world. Only its own state counts: a level being
         /// unloaded around it is not a change.
         /// </summary>
@@ -579,10 +596,13 @@ namespace WhiteKnuckleTogether {
             m_network.Broadcast(writer, SendType.Reliable);
         }
 
-        /// <summary>Points <paramref name="identity"/> at the keyed level it is in now, or none. True if that changed.</summary>
+        /// <summary>
+        /// Points <paramref name="identity"/> at the keyed level it is in now, <see cref="WKTPlayerRooms.CHAMBER"/> inside a
+        /// chamber, or none. True if that changed.
+        /// </summary>
         private static bool UpdateLevelKey(WKTNetIdentity identity) {
             var level = identity.GetComponentInParent<M_Level>(true);
-            var levelKey = level != null && WKTContentSeeding.TryGetLevelKey(level, out var key) ? key : 0UL;
+            var levelKey = level != null && WKTContentSeeding.TryGetLevelKey(level, out var key) ? key : IsInChamber(identity.gameObject) ? WKTPlayerRooms.CHAMBER : 0UL;
             if (levelKey == identity.LevelKey) return false;
             identity.LevelKey = levelKey;
             return true;
@@ -984,6 +1004,7 @@ namespace WhiteKnuckleTogether {
             identity.transform.SetPositionAndRotation(WKTWorldOffset.FromWire(bind.Position, WKTWorldOffset.Get()), bind.Rotation);
             if (identity.gameObject.activeSelf != bind.IsActive)
                 identity.gameObject.SetActive(bind.IsActive);
+            ApplyItemData(identity, bind);
             ClearBuffer(bind.Handle);
             Authority.OnBound(identity);
         }
@@ -992,7 +1013,10 @@ namespace WhiteKnuckleTogether {
             var prefab = GetPrefab(bind);
             if (prefab == null) return null;
             Transform? parent = null;
-            if (bind.LevelKey != 0 && WKTContentSeeding.TryGetLevel(bind.LevelKey, out var level))
+            // The host's chamber objects go into this machine's own copy of the chamber, which is only spawned into once inside.
+            if (bind.LevelKey == WKTPlayerRooms.CHAMBER)
+                parent = WorldLoader.GetCurrentLevelParentRoot();
+            else if (bind.LevelKey != 0 && WKTContentSeeding.TryGetLevel(bind.LevelKey, out var level))
                 parent = level!.transform;
             var position = WKTWorldOffset.FromWire(bind.Position, WKTWorldOffset.Get());
             m_spawningKey = bind.Key;
@@ -1018,13 +1042,17 @@ namespace WhiteKnuckleTogether {
             // Dropped items always end at their full size in the world, whatever scale the prefab was saved with.
             if (identity!.Kind == WKTNetKind.Item && (bind.Key & c_runtime_bit) != 0)
                 identity.transform.localScale = Vector3.one;
-            if (identity.Item != null && identity.Item.itemData != null && bind.ItemData.Count > 0) {
-                identity.Item.itemData.data ??= new List<string>();
-                identity.Item.itemData.data.Clear();
-                identity.Item.itemData.data.AddRange(bind.ItemData);
-                WKTItemModules.Unpack(identity.Item.itemData, identity.Item);
-            }
+            ApplyItemData(identity, bind);
             return identity;
+        }
+
+        /// <summary>Puts the host's item data (and the modules it packs, such as being for sale) on an item here.</summary>
+        private static void ApplyItemData(WKTNetIdentity identity, WKTEntityBind bind) {
+            if (identity.Item == null || identity.Item.itemData == null || bind.ItemData.Count == 0) return;
+            identity.Item.itemData.data ??= new List<string>();
+            identity.Item.itemData.data.Clear();
+            identity.Item.itemData.data.AddRange(bind.ItemData);
+            WKTItemModules.Unpack(identity.Item.itemData, identity.Item);
         }
 
         private static GameObject? GetPrefab(WKTEntityBind bind) {
@@ -1060,8 +1088,11 @@ namespace WhiteKnuckleTogether {
 
         public bool IsRuntimeOnly(WKTEntityBind bind) => (bind.Key & c_runtime_bit) != 0;
 
-        public bool IsLevelActive(ulong levelKey) =>
-            WKTContentSeeding.TryGetLevel(levelKey, out var level) && level!.gameObject.activeInHierarchy;
+        /// <summary>Whether a level is active here, or for <see cref="WKTPlayerRooms.CHAMBER"/> whether the local player is in a chamber.</summary>
+        public bool IsLevelActive(ulong levelKey) => WKTPlayerRooms.IsLoadedHere(levelKey);
+
+        /// <summary>Whether an object sits in a chamber, such as the Bazaar: outside the levels, shown only to those inside one.</summary>
+        private static bool IsInChamber(GameObject gameObject) => gameObject.GetComponentInParent<M_Chamber>(true) != null;
 
         /// <summary>Stops this machine simulating <paramref name="identity"/>: another machine's states drive it from now on.</summary>
         public static void MakePuppet(WKTNetIdentity identity) {
@@ -1110,6 +1141,19 @@ namespace WhiteKnuckleTogether {
         public void ClearBuffer(ushort handle) {
             if (m_buffers.TryGetValue(handle, out var buffer))
                 buffer.Clear();
+        }
+
+        /// <summary>
+        /// Starts an object's buffered poses over for a new sender from where it is shown now, which its first state from that
+        /// sender is blended out of rather than jumped from.
+        /// </summary>
+        public void RestartBuffer(WKTNetIdentity identity) {
+            if (!m_buffers.TryGetValue(identity.Handle, out var buffer)) {
+                buffer = new WKTEntitySnapshotBuffer();
+                m_buffers.Add(identity.Handle, buffer);
+            }
+            var objectTransform = identity.transform;
+            buffer.Restart(new WKTEntityPose(WKTWorldOffset.ToWire(objectTransform.position, WKTWorldOffset.Get()), objectTransform.rotation));
         }
 
         #endregion
@@ -1335,6 +1379,30 @@ namespace WhiteKnuckleTogether {
                 Object.Destroy(identity.gameObject);
         }
 
+        /// <summary>
+        /// The local player paid for a Bazaar item, which the game marks paid on this machine only: the host's copy is paid too
+        /// and bound again, so it is no longer for sale anywhere.
+        /// </summary>
+        public void OnLocalPaid(Item_Object item) {
+            if (!item.TryGetComponent<WKTNetIdentity>(out var identity) || identity.Handle == 0) return;
+            if (IsHost) {
+                Rebind(identity);
+                return;
+            }
+            var writer = m_network.BeginMessage(WKTMessageId.ItemPaid);
+            WKTEntityEvent.Despawn(identity.Handle).WriteHandle(writer);
+            m_network.SendToHost(writer, SendType.Reliable);
+        }
+
+        private void OnItemPaid(WKTPlayer sender, NetDataReader reader) {
+            if (!IsHost || sender.IsHost || !WKTEntityEvent.TryReadHandle(reader, out var request)) return;
+            // Only stock still for sale, paid for by someone in a chamber, as only they can trade for it.
+            if (!m_byHandle.TryGetValue(request.Handle, out var identity) || identity == null || identity.Item is not { itemData: { } item } ||
+                !IsInWorld(identity) || !item.HasTag(WKTItemModules.UNPURCHASED) || WKTPlayerRooms.Get(sender.Id) != WKTPlayerRooms.CHAMBER) return;
+            WKTItemModules.MarkPaid(item, identity.Item);
+            Rebind(identity);
+        }
+
         /// <summary>Client only: an item just dropped here is used up before the host heard of it, so it is never sent.</summary>
         public void CancelLocalDrop(Item item) {
             var dropObject = item.GetDropObject(false);
@@ -1481,8 +1549,10 @@ namespace WhiteKnuckleTogether {
 
         private void OnPickupRequest(WKTPlayer sender, NetDataReader reader) {
             if (!IsHost || sender.IsHost || !WKTEntityEvent.TryReadHandle(reader, out var request)) return;
+            // A chamber's items can only be taken by someone inside one: the host's switched-off chamber stays where it was.
             var accepted = m_byHandle.TryGetValue(request.Handle, out var identity) && identity != null && identity.Kind == WKTNetKind.Item &&
-                IsInWorld(identity) && IsNear(sender.Id, identity.transform.position, c_pickup_range);
+                IsInWorld(identity) && IsNear(sender.Id, identity.transform.position, c_pickup_range) &&
+                (identity.LevelKey != WKTPlayerRooms.CHAMBER || WKTPlayerRooms.Get(sender.Id) == WKTPlayerRooms.CHAMBER);
             if (accepted) {
                 var item = identity!.Item;
                 // A shared artifact altar's pick is the client's: the altar takes back the other artifacts, as for the host.

@@ -25,6 +25,7 @@ namespace WhiteKnuckleTogether {
                 case ModifierId.GrabAssists:
                 case ModifierId.ProximityVoice:
                 case ModifierId.DeadCanTalk:
+                case ModifierId.KeepTogether:
                     settingId = string.Empty;
                     return false;
                 default:

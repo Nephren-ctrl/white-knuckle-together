@@ -32,6 +32,10 @@ namespace WhiteKnuckleTogether {
         public const string WAIT_NEAR = "Waiting for everyone to come close";
         /// <summary>How close to a listed button (see <see cref="s_gatheredButtons"/>) every living player must be for it to press.</summary>
         public const float BUTTON_RADIUS = 15f;
+        /// <summary>How close to the first perk computer's elevator button everyone must be, when not all of them picked a perk.</summary>
+        public const float PERK_BUTTON_RADIUS = 3f;
+        /// <summary>What the wait panel says while a perk computer's button waits for everyone to pick a perk.</summary>
+        public const string WAIT_PERK = "Waiting for everyone to pick a perk";
         /// <summary>How far under a security field's start button (see <see cref="s_passStarts"/>) a player has still passed it: on its floor.</summary>
         public const float PASS_BUTTON_BELOW = 3f;
         /// <summary>How far under a security field's trigger box a player has still passed it: a capsule reaching into its floor.</summary>
@@ -94,7 +98,8 @@ namespace WhiteKnuckleTogether {
 
         /// <summary>
         /// Level buttons that only press once every living player is there, by level and the button's path below it: within
-        /// <c>Radius</c> of the button, or inside the box of the trigger at <c>Zone</c> when that is set. Buttons that start a
+        /// <c>Radius</c> of the button, or inside the box of the trigger at <c>Zone</c> when that is set, or with <c>Above</c>
+        /// anywhere above that box's floor (see <see cref="GetFloor"/>). Buttons that start a
         /// mover need no entry (see <see cref="WKTButtonSync.MOVER_GATHER_RADIUS"/>).
         /// <list type="bullet">
         /// <item>The switch that opens the pier's first bay onto the pier: everyone must be in the bay, past its first door.</item>
@@ -102,13 +107,21 @@ namespace WhiteKnuckleTogether {
         /// <item>The tram's own button, which sets off the ride down.</item>
         /// <item>The seal in the Tangled Sink's exit room, which shuts the floor hatch up from the sink: everyone must be in the
         /// room, whose box the speedrun tracker's trigger is. A radius would also count players still climbing in the sink.</item>
+        /// <item>The button that drops the elevator past the first perk computer, which also switches the computer off: everyone
+        /// must be at the button or have picked a perk there (<c>Computer</c>, its <c>computerID</c>).</item>
+        /// <item>The two brake buttons on the roof of the service elevator past the Teeth's vent, which drop it down the shaft
+        /// onto the way up from the vent: everyone must be up past its floor, in the cab, on its roof or out of it.</item>
         /// </list>
         /// </summary>
-        private static readonly (string Level, string Path, float Radius, string? Zone)[] s_gatheredButtons = {
-            ("M3_Habitation_Pier_Entrance", "Scripting/Prop_Button_02_Switch", 0f, "Scripting/Trigger-FirstBaySeal"),
-            ("Campaign_Interlude_Habitation_To_Abyss", "Scripting/Prop_Button_03", BUTTON_RADIUS, null),
-            ("Campaign_Interlude_Habitation_To_Abyss", "Exterior/M4_Interlude_Collapse_Anim.01/Tram_Interfacility_Offline_Front_01/Prop_Button_03.01", BUTTON_RADIUS, null),
-            ("Campaign_Interlude_Sink_To_Pipeworks", "Scripting/Buttons/Button_Main_Seal", 0f, "UT_SpeedrunTracker")
+        private static readonly (string Level, string Path, float Radius, string? Zone, bool Above, string? Computer)[] s_gatheredButtons = {
+            ("M3_Habitation_Pier_Entrance", "Scripting/Prop_Button_02_Switch", 0f, "Scripting/Trigger-FirstBaySeal", false, null),
+            ("Campaign_Interlude_Habitation_To_Abyss", "Scripting/Prop_Button_03", BUTTON_RADIUS, null, false, null),
+            ("Campaign_Interlude_Habitation_To_Abyss", "Exterior/M4_Interlude_Collapse_Anim.01/Tram_Interfacility_Offline_Front_01/Prop_Button_03.01", BUTTON_RADIUS, null, false,
+                null),
+            ("Campaign_Interlude_Sink_To_Pipeworks", "Scripting/Buttons/Button_Main_Seal", 0f, "UT_SpeedrunTracker", false, null),
+            ("Campaign_Interlude_Silo_To_Pipeworks", "M1_Campaign_Silo_To_Pipeworks_01/Level_Hull/Button.002", PERK_BUTTON_RADIUS, null, false, "PIPE"),
+            ("M3_Habitation_Shaft_To_Pier", "Service Elevator/Elevator_Service_01/Brake Counter/Prop_Button_04", 0f, "Scripting/Trigger-ElevatorEvacuate", true, null),
+            ("M3_Habitation_Shaft_To_Pier", "Service Elevator/Elevator_Service_01/Brake Counter/Prop_Button_04.01", 0f, "Scripting/Trigger-ElevatorEvacuate", true, null)
         };
 
         /// <summary>
@@ -138,26 +151,34 @@ namespace WhiteKnuckleTogether {
         /// </summary>
         public static float GetPassHeight(Component input) {
             if (input is UT_TriggerZone && input.TryGetComponent<BoxCollider>(out var box))
-                return box.transform.TransformPoint(box.center - new Vector3(0f, box.size.y * 0.5f, 0f)).y - PASS_ZONE_BELOW;
+                return GetFloor(box);
             return input.transform.position.y - PASS_BUTTON_BELOW;
         }
 
+        /// <summary>The height a player standing on the floor of <paramref name="box"/> is above.</summary>
+        public static float GetFloor(BoxCollider box) => box.transform.TransformPoint(box.center - new Vector3(0f, box.size.y * 0.5f, 0f)).y - PASS_ZONE_BELOW;
+
         /// <summary>Whether every living player is above <paramref name="height"/>.</summary>
-        public static bool AllAbove(float height) {
+        public static bool AllAbove(float height) => AllAbove(height, out _, out _);
+
+        /// <summary>Whether every living player is above <paramref name="height"/>; <paramref name="above"/> of <paramref name="living"/> are.</summary>
+        public static bool AllAbove(float height, out int above, out int living) {
             Span<Vector3> positions = stackalloc Vector3[WKTLobbyConsts.MAX_PLAYERS + 1];
-            var living = LivingPositions(positions);
-            return WKTOneWayDoors.CountAbove(positions.Slice(0, living), height) >= living;
+            living = LivingPositions(positions);
+            above = WKTOneWayDoors.CountAbove(positions.Slice(0, living), height);
+            return above >= living;
         }
 
         /// <summary>
         /// Adds to <paramref name="buttons"/> the buttons of a level whose press waits for everyone (see
         /// <see cref="s_gatheredButtons"/>): each one's path below the level, how close to it everyone must be, and the path of
-        /// the trigger whose box they must be in instead, or null.
+        /// the trigger whose box they must be in instead, or null, whether being above that box's floor will do, and the
+        /// computer at which everyone having picked a perk also lets it press, or null.
         /// </summary>
-        public static void CollectGatheredButtons(string levelName, List<(string Path, float Radius, string? Zone)> buttons) {
-            foreach (var (level, path, radius, zone) in s_gatheredButtons) {
+        public static void CollectGatheredButtons(string levelName, List<(string Path, float Radius, string? Zone, bool Above, string? Computer)> buttons) {
+            foreach (var (level, path, radius, zone, above, computer) in s_gatheredButtons) {
                 if (levelName.StartsWith(level, StringComparison.Ordinal))
-                    buttons.Add((path, radius, zone));
+                    buttons.Add((path, radius, zone, above, computer));
             }
         }
 
@@ -338,7 +359,7 @@ namespace WhiteKnuckleTogether {
         /// </summary>
         public static bool IsPulledByLoading(WKTLoadPull pull, string? localBranch, string keptBranch) =>
             pull switch {
-                WKTLoadPull.Everyone => true,
+                WKTLoadPull.Everyone or WKTLoadPull.Diver => true,
                 WKTLoadPull.OtherBranches => localBranch != null && keptBranch.Length > 0 && localBranch != keptBranch,
                 _ => false
             };

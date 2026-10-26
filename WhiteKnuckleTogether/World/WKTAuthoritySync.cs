@@ -27,6 +27,8 @@ namespace WhiteKnuckleTogether {
         public const double OWNER_TIMEOUT = 3.0;
         /// <summary>How long a client keeps simulating a prop it let go of, while the host's states for it arrive.</summary>
         public const double HANDBACK = 0.35;
+        /// <summary>An enemy taken over within this distance of the old owner's pose stays where it is shown here.</summary>
+        public const float TAKEOVER_KEEP_DISTANCE = 3f;
         private const SendType c_state_send_type = SendType.Unreliable | SendType.NoNagle;
         private readonly WKTWorldSync m_sync;
         private readonly WKTNetwork m_network;
@@ -370,9 +372,13 @@ namespace WhiteKnuckleTogether {
             var handle = identity.Handle;
             var wasHere = SimulatesHere(identity);
             identity.Owner = authority.Owner;
-            m_sync.ClearBuffer(handle);
             var local = LocalId;
             var here = authority.Owner == HOST ? m_sync.IsHost : authority.Owner == local;
+            // Shown here from now on: the new owner's states blend out of where it is shown now, so it does not jump.
+            if (here)
+                m_sync.ClearBuffer(handle);
+            else
+                m_sync.RestartBuffer(identity);
             if (here) {
                 m_handbacks.Remove(handle);
                 if (!m_sync.IsHost)
@@ -399,7 +405,11 @@ namespace WhiteKnuckleTogether {
         }
 
         private static void TakeOver(WKTNetIdentity identity, in WKTEntityAuthority authority) {
-            identity.transform.SetPositionAndRotation(WKTWorldOffset.FromWire(authority.Pose.Position, WKTWorldOffset.Get()), authority.Pose.Rotation);
+            var position = WKTWorldOffset.FromWire(authority.Pose.Position, WKTWorldOffset.Get());
+            // An enemy shown a little behind the old owner carries on from where it is shown, rather than jumping ahead. A thrown
+            // prop keeps its exact release pose.
+            if (identity.Prop != null || (identity.transform.position - position).sqrMagnitude > TAKEOVER_KEEP_DISTANCE * TAKEOVER_KEEP_DISTANCE)
+                identity.transform.SetPositionAndRotation(position, authority.Pose.Rotation);
             var body = identity.Body;
             if (body != null && !body.isKinematic) {
                 body.linearVelocity = authority.Velocity;

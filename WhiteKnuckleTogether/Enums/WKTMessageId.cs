@@ -390,6 +390,21 @@ namespace WhiteKnuckleTogether {
         /// were (see <see cref="WKTPlayerInventories"/>). Payload: (host to clients only) the player's id, then
         /// <see cref="WKTInventorySnapshot"/>.
         /// </summary>
-        PlayerInventory = 113
+        PlayerInventory = 113,
+        /// <summary>
+        /// Client to host (payload: computer id), then host to everyone else (payload: player id, computer id), reliable: a
+        /// player picked a perk at an in-world computer, which a button may wait for (see <see cref="WKTButtonSync"/>).
+        /// </summary>
+        PerkPicked = 114,
+        /// <summary>
+        /// Client to host, then host to everyone else, reliable: a player left the Bazaar, and everyone in one leaves with them
+        /// (see <see cref="WKTBazaar"/>). No payload.
+        /// </summary>
+        ChamberLeave = 115,
+        /// <summary>
+        /// Client to host, reliable: the client paid for a Bazaar item, which the host marks paid and binds to everyone again
+        /// (see <see cref="WKTWorldSync.OnLocalPaid"/>). Payload: the handle.
+        /// </summary>
+        ItemPaid = 116
     }
 }

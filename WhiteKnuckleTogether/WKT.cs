@@ -133,7 +133,7 @@ namespace WhiteKnuckleTogether {
             run.AddComponent<WKTSharedRoaches>();
             run.AddComponent<WKTMotherJudgement>();
             run.AddComponent<WKTMotherTrades>();
-            if (Network.Session.IsRace)
+            if (Network.Session.IsRace || Network.Session.KeepTogether)
                 run.AddComponent<WKTRace>();
         }
 

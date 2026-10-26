@@ -38,6 +38,12 @@
       <Reference Include="AstarPathfindingProject">
         <HintPath>..\libs\AstarPathfindingProject.dll</HintPath>
       </Reference>
+      <Reference Include="PackageTools">
+        <HintPath>..\libs\PackageTools.dll</HintPath>
+      </Reference>
+      <Reference Include="Drawing">
+        <HintPath>..\libs\Drawing.dll</HintPath>
+      </Reference>
       <Reference Include="BepInEx">
         <HintPath>..\libs\BepInEx.dll</HintPath>
       </Reference>

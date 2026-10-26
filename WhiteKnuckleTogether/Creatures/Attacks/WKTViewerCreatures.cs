@@ -155,6 +155,7 @@ namespace WhiteKnuckleTogether {
                 ForgetDeadSeers();
                 ExpireLightFear(now);
                 TeethKills.UpdateHost(m_teeth);
+                WKTTeethReach.Probe(m_teeth);
             }
             else if (now >= m_nextFearReport) {
                 m_nextFearReport = now + 1.0 / LIGHT_FEAR_RATE;

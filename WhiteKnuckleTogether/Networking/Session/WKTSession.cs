@@ -40,6 +40,8 @@ namespace WhiteKnuckleTogether {
         public bool ProximityVoice => IsRunActive && Run.HasModifier(ModifierId.ProximityVoice);
         /// <summary>Whether the dead may talk to the living by holding focus (see <see cref="ModifierId.DeadCanTalk"/>).</summary>
         public bool DeadCanTalk => IsRunActive && Run.HasModifier(ModifierId.DeadCanTalk);
+        /// <summary>Whether an orb keeps the group together (see <see cref="ModifierId.KeepTogether"/> and <see cref="WKTRace"/>).</summary>
+        public bool KeepTogether => IsRunActive && !IsRace && Run.HasModifier(ModifierId.KeepTogether);
         /// <summary>Whether timed handholds break and fire their timers for everyone. Only possible in a <see cref="IsSyncedWorld"/> run.</summary>
         public bool ShareTimedHandholds => IsSyncedWorld && Run.HasModifier(ModifierId.ShareTimedHandholds);
         /// <summary>Which height the shared goo keeps up with. Only used in a <see cref="IsSyncedWorld"/> run.</summary>

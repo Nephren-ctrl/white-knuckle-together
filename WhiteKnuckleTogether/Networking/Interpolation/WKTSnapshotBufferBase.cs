@@ -24,6 +24,9 @@ namespace WhiteKnuckleTogether {
         private int m_start;
         private long m_latestTick;
         private double m_clockOffset;
+        /// <summary>The pose shown before a restarted stream's first state, which playback then blends out of (see <see cref="Restart"/>).</summary>
+        private TPose m_seed;
+        private bool m_hasSeed;
 
         public int Count { get; private set; }
         public ushort LatestSequence { get; private set; }
@@ -48,6 +51,12 @@ namespace WhiteKnuckleTogether {
                 m_clockOffset = offset;
             else
                 m_clockOffset += (offset - m_clockOffset) * c_offset_rise;
+            // The first state after a restart is reached from the pose shown until now, over one interpolation delay.
+            if (m_hasSeed) {
+                m_hasSeed = false;
+                m_snapshots[m_start] = new Snapshot(senderTime - INTERPOLATION_DELAY, m_seed);
+                Count = 1;
+            }
             if (Count == CAPACITY) {
                 m_start = (m_start + 1) % CAPACITY;
                 Count--;
@@ -62,7 +71,11 @@ namespace WhiteKnuckleTogether {
         /// <summary>The pose to show at local time <paramref name="now"/>. False until a state has been added.</summary>
         public bool TrySample(double now, out TPose pose) {
             pose = default;
-            if (Count == 0) return false;
+            if (Count == 0) {
+                if (!m_hasSeed) return false;
+                pose = m_seed;
+                return true;
+            }
             var renderTime = now - m_clockOffset - INTERPOLATION_DELAY;
             ref readonly var oldest = ref Get(0);
             if (Count == 1 || renderTime <= oldest.time) {
@@ -92,6 +105,17 @@ namespace WhiteKnuckleTogether {
             m_latestTick = 0;
             m_clockOffset = 0;
             LatestSequence = 0;
+            m_hasSeed = false;
+        }
+
+        /// <summary>
+        /// Starts over for a new sender, such as when another machine takes over simulating the object: <paramref name="from"/>,
+        /// the pose shown now, is held until the new sender's first state and then blended into it instead of jumping.
+        /// </summary>
+        public void Restart(in TPose from) {
+            Clear();
+            m_seed = from;
+            m_hasSeed = true;
         }
 
         private static TPose Blend(in Snapshot from, in Snapshot to, float t) {

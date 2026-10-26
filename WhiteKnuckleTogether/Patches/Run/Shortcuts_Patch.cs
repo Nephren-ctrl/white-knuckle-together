@@ -48,4 +48,14 @@ namespace WhiteKnuckleTogether {
         private static bool Prefix(UT_EventController __instance, string eventName) =>
             eventName != WKTShortcuts.UNLOCK_EVENT || WKTShortcutSync.AllowOpen(__instance);
     }
+
+    /// <summary>The Hadal Diver letting the local player off brings everyone left behind along (see <see cref="WKTDiverExit"/>).</summary>
+    [HarmonyPatch(typeof(DEN_HadalDiver), nameof(DEN_HadalDiver.ExitDiver))]
+    internal sealed class DiverExit_Patch {
+        [UsedImplicitly]
+        private static void Prefix(DEN_HadalDiver __instance) {
+            if (!WKTDiverExit.IsApplying && WKTDoorSync.Instance is { } sync)
+                sync.OnLocalDiverExit(WKTDiverExit.GetExit(__instance));
+        }
+    }
 }

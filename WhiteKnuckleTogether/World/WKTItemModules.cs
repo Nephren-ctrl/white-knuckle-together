@@ -77,6 +77,9 @@ namespace WhiteKnuckleTogether {
             SetForSale(item, forSale, worldObject != null ? worldObject : item.GetDropObject(false));
         }
 
+        /// <summary>Someone paid for a shop item: it is no longer for sale, as the game's own purchase leaves it.</summary>
+        public static void MarkPaid(Item item, Item_Object? worldObject) => SetForSale(item, false, worldObject);
+
         /// <summary>A shop item stays for sale until someone pays for it; any other item is left as it is.</summary>
         private static void SetForSale(Item item, bool forSale, Item_Object? worldObject) {
             if (forSale == item.HasTag(UNPURCHASED)) return;

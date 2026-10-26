@@ -33,6 +33,11 @@ namespace WhiteKnuckleTogether {
         /// Mod only. A dead player holding focus is heard by the living too, from where their spectator camera is, and shows
         /// there as a faint ghost head while they talk. Off, the dead are heard only by the dead.
         /// </summary>
-        DeadCanTalk
+        DeadCanTalk,
+        /// <summary>
+        /// Mod only. An orb like a race's follows the middle of the living group, and hurts anyone left outside it, so the
+        /// group must climb together. Co-op only.
+        /// </summary>
+        KeepTogether
     }
 }

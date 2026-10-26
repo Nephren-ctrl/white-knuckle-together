@@ -9,6 +9,11 @@ namespace WhiteKnuckleTogether {
         /// <summary>Every level is made again (<c>SendToWorldLoader</c>): everyone far away is brought over.</summary>
         Everyone,
         /// <summary>Every branch but the trigger's is deleted (<c>DeleteOtherBranches</c>): only whoever is on another branch.</summary>
-        OtherBranches
+        OtherBranches,
+        /// <summary>
+        /// The Hadal Diver let its riders off: everyone left behind ends their own diver's ride, which builds the branch it
+        /// leads to, and is brought over (see <see cref="WKTDiverExit"/>).
+        /// </summary>
+        Diver
     }
 }

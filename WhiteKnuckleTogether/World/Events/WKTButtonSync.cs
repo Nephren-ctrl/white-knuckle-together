@@ -40,7 +40,9 @@ namespace WhiteKnuckleTogether {
         private readonly Dictionary<int, bool> m_passStarts = new();
         /// <summary>By button instance id, what the listed buttons wait for.</summary>
         private readonly Dictionary<int, Gather> m_gathers = new();
-        private readonly List<(string Path, float Radius, string? Zone)> m_gatherScratch = new();
+        private readonly List<(string Path, float Radius, string? Zone, bool Above, string? Computer)> m_gatherScratch = new();
+        /// <summary>Who picked a perk at which computer this run, for the buttons that wait for everyone to (see <see cref="Gather.Computer"/>).</summary>
+        private readonly HashSet<(string Computer, byte Player)> m_perkPicks = new();
         private readonly List<CL_Button> m_scratch = new();
         private readonly HashSet<int> m_computerLevers = new();
         private CL_Button? m_noticeButton;
@@ -76,7 +78,7 @@ namespace WhiteKnuckleTogether {
 
         private void IndexGatheredButtons(M_Level level) {
             WKTGatherCheck.CollectGatheredButtons(level.name, m_gatherScratch);
-            foreach (var (path, radius, zonePath) in m_gatherScratch) {
+            foreach (var (path, radius, zonePath, above, computer) in m_gatherScratch) {
                 var root = level.transform;
                 if (root.Find(path) is not { } found || !found.TryGetComponent<CL_Button>(out var button)) {
                     WKT.Instance.Logger.LogWarning($"Level {level.name} has no gathering button {path}.");
@@ -87,7 +89,7 @@ namespace WhiteKnuckleTogether {
                     WKT.Instance.Logger.LogWarning($"Level {level.name} has no gathering zone {zonePath} for {path}.");
                     continue;
                 }
-                m_gathers[button.GetInstanceID()] = new Gather(radius, zone);
+                m_gathers[button.GetInstanceID()] = new Gather(radius, zone, above, computer, this);
             }
             m_gatherScratch.Clear();
         }
@@ -136,13 +138,58 @@ namespace WhiteKnuckleTogether {
             m_states[state.Key] = state.AsSettled();
         }
 
-        /// <summary>Host only: every button's state, for a player who just joined.</summary>
+        /// <summary>Host only: every button's state and the perks picked so far, for a player who just joined.</summary>
         public void SendAll(WKTPlayer player) {
             foreach (var state in m_states.Values) {
                 var writer = m_network.BeginMessage(WKTMessageId.ButtonState);
                 state.Write(writer);
                 m_network.SendToPlayer(player, writer, SendType.Reliable);
             }
+            foreach (var (computer, picker) in m_perkPicks)
+                m_network.SendToPlayer(player, WritePerkPicked(picker, computer), SendType.Reliable);
+        }
+
+        /// <summary>The local player picked a perk at the computer <paramref name="computerId"/>: everyone hears of it.</summary>
+        public void OnLocalPerkPicked(string computerId) {
+            if (string.IsNullOrEmpty(computerId) || m_network.LocalPlayer is not { } local) return;
+            m_perkPicks.Add((computerId, local.Id));
+            if (IsHost) {
+                m_network.Broadcast(WritePerkPicked(local.Id, computerId), SendType.Reliable);
+                return;
+            }
+            var writer = m_network.BeginMessage(WKTMessageId.PerkPicked);
+            writer.Put(computerId);
+            m_network.SendToHost(writer, SendType.Reliable);
+        }
+
+        public void OnPerkPickedMessage(WKTPlayer sender, NetDataReader reader) {
+            if (IsHost) {
+                if (sender.IsHost || !reader.TryGetString(out var computer) || string.IsNullOrEmpty(computer)) return;
+                m_perkPicks.Add((computer, sender.Id));
+                m_network.Broadcast(WritePerkPicked(sender.Id, computer), SendType.Reliable, sender);
+                return;
+            }
+            if (sender.IsHost && reader.TryGetByte(out var picker) && reader.TryGetString(out var picked) && !string.IsNullOrEmpty(picked))
+                m_perkPicks.Add((picked, picker));
+        }
+
+        private NetDataWriter WritePerkPicked(byte picker, string computerId) {
+            var writer = m_network.BeginMessage(WKTMessageId.PerkPicked);
+            writer.Put(picker);
+            writer.Put(computerId);
+            return writer;
+        }
+
+        /// <summary>How many living players picked a perk at <paramref name="computerId"/>.</summary>
+        private int CountLivingPickers(string computerId) {
+            var picked = 0;
+            if (ENT_Player.playerObject is { dead: false } && m_network.LocalPlayer is { } local && m_perkPicks.Contains((computerId, local.Id)))
+                picked++;
+            for (var i = 0; i < WKTPlayerPositions.RemoteCount; i++) {
+                if (!WKTPlayerPositions.IsRemoteDead(i) && m_perkPicks.Contains((computerId, WKTPlayerPositions.GetRemoteId(i))))
+                    picked++;
+            }
+            return picked;
         }
 
         /// <summary>A new host owns the buttons as they are on its machine.</summary>
@@ -179,13 +226,14 @@ namespace WhiteKnuckleTogether {
                 m_noticeUntil = float.NegativeInfinity;
                 return;
             }
-            WKTWaitHud.Report(m_noticeGather.Zone != null ? WKTGatherCheck.WAIT_IN_ROOM : WAIT_LABEL, near, living);
+            WKTWaitHud.Report(m_noticeGather.Computer != null ? WKTGatherCheck.WAIT_PERK : m_noticeGather.Zone != null ? WKTGatherCheck.WAIT_IN_ROOM : WAIT_LABEL, near,
+                living);
         }
 
         /// <summary>What a press of <paramref name="button"/> waits for, if anything.</summary>
         private bool TryGetGather(CL_Button button, out Gather gather) {
             if (m_gathers.TryGetValue(button.GetInstanceID(), out gather)) return true;
-            gather = new Gather(MOVER_GATHER_RADIUS, null);
+            gather = new Gather(MOVER_GATHER_RADIUS, null, false, null, this);
             return StartsMover(button);
         }
 
@@ -201,7 +249,9 @@ namespace WhiteKnuckleTogether {
         private bool StartsMover(CL_Button button) {
             var id = button.GetInstanceID();
             if (m_startsMover.TryGetValue(id, out var starts)) return starts;
-            starts = CallsStartMove(button.activeEvent) || button is CL_ToggleButton toggle && (CallsStartMove(toggle.onEvent) || CallsStartMove(toggle.offEvent));
+            // A Bazaar's hatches take everyone in or out, so they wait like a mover's button (see WKTBazaar).
+            starts = CallsStartMove(button.activeEvent) || button is CL_ToggleButton toggle && (CallsStartMove(toggle.onEvent) || CallsStartMove(toggle.offEvent)) ||
+                     WKTBazaar.IsHatch(button);
             m_startsMover[id] = starts;
             return starts;
         }
@@ -260,20 +310,34 @@ namespace WhiteKnuckleTogether {
             }
         }
 
-        /// <summary>Everyone a button waits for: inside <see cref="Zone"/> when set, else within <see cref="Radius"/> of it.</summary>
+        /// <summary>
+        /// Everyone a button waits for: inside <see cref="Zone"/> when set (with <see cref="Above"/>, anywhere above its floor),
+        /// else within <see cref="Radius"/> of it. With a
+        /// <see cref="Computer"/>, everyone having picked a perk at that computer will do too, and <c>near</c> counts the pickers.
+        /// </summary>
         private readonly struct Gather {
             public readonly float Radius;
             public readonly BoxCollider? Zone;
+            public readonly bool Above;
+            public readonly string? Computer;
+            private readonly WKTButtonSync m_owner;
 
-            public Gather(float radius, BoxCollider? zone) {
+            public Gather(float radius, BoxCollider? zone, bool above, string? computer, WKTButtonSync owner) {
                 Radius = radius;
                 Zone = zone;
+                Above = above;
+                Computer = computer;
+                m_owner = owner;
             }
 
-            public bool IsMet(CL_Button button, out int near, out int living) =>
-                Zone != null
-                    ? WKTGatherCheck.AllInZone(Zone, 0f, out near, out living)
-                    : WKTGatherCheck.AllNear(button.transform.position, Radius, out near, out living);
+            public bool IsMet(CL_Button button, out int near, out int living) {
+                var met = Zone == null ? WKTGatherCheck.AllNear(button.transform.position, Radius, out near, out living)
+                    : Above ? WKTGatherCheck.AllAbove(WKTGatherCheck.GetFloor(Zone), out near, out living)
+                    : WKTGatherCheck.AllInZone(Zone, 0f, out near, out living);
+                if (met || Computer == null) return met;
+                near = m_owner.CountLivingPickers(Computer);
+                return near >= living;
+            }
         }
 
         /// <summary>The button's private parts, found when first used: the test runtime cannot load the game's types eagerly.</summary>

@@ -9,7 +9,7 @@ namespace WhiteKnuckleTogether {
     public sealed class WKTPlugin : BaseUnityPlugin {
         public const string GUID = "danon5.WhiteKnuckleTogether";
         public const string NAME = "White Knuckle Together";
-        public const string VERSION = "0.1.9";
+        public const string VERSION = "0.2.0";
         private readonly Harmony m_harmony = new(GUID);
 
         internal static WKTConfig? ModConfig { get; private set; }

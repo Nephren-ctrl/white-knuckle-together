@@ -117,6 +117,8 @@ namespace WhiteKnuckleTogether {
             m_oneWayDoors = new WKTOneWayDoors();
             Buttons = new WKTButtonSync(m_network, m_oneWayDoors);
             m_network.Messages.Register(WKTMessageId.ButtonState, Buttons.OnMessage);
+            m_network.Messages.Register(WKTMessageId.PerkPicked, Buttons.OnPerkPickedMessage);
+            m_network.Messages.Register(WKTMessageId.ChamberLeave, OnChamberLeave);
             m_network.Messages.Register(WKTMessageId.MovingPart, OnMovingPart);
             m_network.Messages.Register(WKTMessageId.GatherPull, OnGatherPull);
             m_onLevelKeyed = IndexLevel;
@@ -150,6 +152,8 @@ namespace WhiteKnuckleTogether {
             m_network.Messages.Unregister(WKTMessageId.MovingPart);
             m_network.Messages.Unregister(WKTMessageId.GatherPull);
             m_network.Messages.Unregister(WKTMessageId.ButtonState);
+            m_network.Messages.Unregister(WKTMessageId.PerkPicked);
+            m_network.Messages.Unregister(WKTMessageId.ChamberLeave);
             m_network.OnPlayerConnected -= m_onPlayerConnected;
             m_network.OnHostChanged -= m_onHostChanged;
         }
@@ -262,7 +266,7 @@ namespace WhiteKnuckleTogether {
                     }
                     else if (input is UT_TriggerZone && LooksLikeDoor(target))
                         WarnUnknownDoor(level, target, method);
-                    masks = masks.With(i, WKTWorldWiring.IsLocalTarget(target.GetType()) || IsOnPlayer(target));
+                    masks = masks.With(i, WKTWorldWiring.IsLocalTarget(target.GetType()) || IsOnPlayer(target) || (playerZone && IsComputerKeyboard(target)));
                 }
                 var buildsBranch = WKTGatherCheck.CallsGenerator(unityEvent);
                 var listed = WKTGatherCheck.IsGroupStart(level.name, WKTGatherCheck.PathBelow(input.transform, level.transform), name, out var inZone, out var below,
@@ -367,17 +371,19 @@ namespace WhiteKnuckleTogether {
         }
 
         /// <summary>
-        /// Damage that moves a door, such as a drop ladder that swings down when something hits it. Any player's hit lands on
-        /// their own machine, so its events go through the host like a button's. Other damage keeps to its own syncs.
+        /// Damage that moves a door, such as a drop ladder that swings down when something hits it, or a flesh door that opens
+        /// while it is being hit (its hits toggle a <c>UT_Toggle</c>). Any player's hit lands on their own machine, so its events
+        /// go through the host like a button's. Other damage keeps to its own syncs.
         /// </summary>
         private static bool IsDoorDamage(MonoBehaviour behaviour) =>
-            behaviour is UT_Damage damage && (TargetsDoor(damage.DamageEvent) || TargetsDoor(damage.KillEvent));
+            behaviour is UT_Damage damage && (TargetsDoor(damage.DamageEvent, true) || TargetsDoor(damage.KillEvent, false));
 
-        private static bool TargetsDoor(UnityEventBase? unityEvent) {
+        private static bool TargetsDoor(UnityEventBase? unityEvent, bool toggles) {
             if (unityEvent == null) return false;
             var count = unityEvent.GetPersistentEventCount();
             for (var i = 0; i < count; i++) {
-                if (unityEvent.GetPersistentTarget(i) is UT_Door) return true;
+                var target = unityEvent.GetPersistentTarget(i);
+                if (target is UT_Door || (toggles && target is UT_Toggle)) return true;
             }
             return false;
         }
@@ -394,6 +400,19 @@ namespace WhiteKnuckleTogether {
 
         private static bool IsOnPlayer(UnityEngine.Object target) =>
             target is Component component && component != null && component.GetComponentInParent<ENT_Player>(true) != null;
+
+        /// <summary>
+        /// A computer's keyboard, which a trigger switches off as a player walks away from it (the Silos safe room's exit and its
+        /// experimental perk machine). Each player passes the trigger on their own, so it only goes off for them.
+        /// </summary>
+        private static bool IsComputerKeyboard(UnityEngine.Object target) {
+            if (target is not GameObject gameObject || !gameObject.TryGetComponent<CL_Button>(out var button) || button.activeEvent == null) return false;
+            var count = button.activeEvent.GetPersistentEventCount();
+            for (var i = 0; i < count; i++) {
+                if (button.activeEvent.GetPersistentTarget(i) is OS_Computer_Interface) return true;
+            }
+            return false;
+        }
 
         private void ForgetLevel(M_Level level) {
             var levelId = level.gameObject.GetInstanceID();
@@ -517,7 +536,7 @@ namespace WhiteKnuckleTogether {
         /// deletes; whoever set off level scripting that takes levels away brings over whoever is in them.
         /// </summary>
         private void OnGatherPull(WKTPlayer sender, NetDataReader reader) {
-            if (!WKTWire.TryGetPosition(reader, out var wirePosition) || !reader.TryGetByte(out var pullValue) || pullValue > (byte)WKTLoadPull.OtherBranches ||
+            if (!WKTWire.TryGetPosition(reader, out var wirePosition) || !reader.TryGetByte(out var pullValue) || pullValue > (byte)WKTLoadPull.Diver ||
                 !reader.TryGetString(out var keptBranch) || !reader.TryGetULong(out var key) || !reader.TryGetByte(out var index)) return;
             var pull = (WKTLoadPull)pullValue;
             if (IsHost) {
@@ -531,6 +550,8 @@ namespace WhiteKnuckleTogether {
             if (pull != WKTLoadPull.None) {
                 // This player's own pass through the same trigger brings nobody again.
                 m_loadPulls.Add((key, index));
+                if (pull == WKTLoadPull.Diver)
+                    WKTDiverExit.EndLocalRide();
                 var loader = WorldLoader.instance;
                 var localBranch = loader != null ? loader.GetCurrentBranch()?.id : null;
                 if (WKTGatherCheck.IsPulledByLoading(pull, localBranch, keptBranch))
@@ -539,6 +560,40 @@ namespace WhiteKnuckleTogether {
             }
             m_lastPulled = Time.unscaledTime;
             WKTGatherCheck.PullLocal(center, m_network.Session.LocalSlot);
+        }
+
+        /// <summary>
+        /// The Hadal Diver let the local player off near <paramref name="exit"/>: everyone left behind is brought there, however
+        /// far (see <see cref="WKTDiverExit"/>).
+        /// </summary>
+        public void OnLocalDiverExit(Vector3 exit) {
+            if (m_network.Session.IsRace) return;
+            var writer = m_network.BeginMessage(WKTMessageId.GatherPull);
+            WriteGatherPull(writer, WKTWorldOffset.ToWire(exit, WKTWorldOffset.Get()), WKTLoadPull.Diver, string.Empty, 0UL, 0);
+            if (IsHost)
+                m_network.Broadcast(writer, SendType.Reliable);
+            else
+                m_network.SendToHost(writer, SendType.Reliable);
+        }
+
+        /// <summary>The local player left the Bazaar by its hatch: everyone in one leaves with them (see <see cref="WKTBazaar"/>).</summary>
+        public void OnLocalBazaarLeft() {
+            // Racers shop on their own, as the hatches do not wait for them either.
+            if (m_network.Session.IsRace) return;
+            var writer = m_network.BeginMessage(WKTMessageId.ChamberLeave);
+            if (IsHost)
+                m_network.Broadcast(writer, SendType.Reliable);
+            else
+                m_network.SendToHost(writer, SendType.Reliable);
+        }
+
+        private void OnChamberLeave(WKTPlayer sender, NetDataReader reader) {
+            if (IsHost) {
+                if (sender.IsHost) return;
+                m_network.Broadcast(m_network.BeginMessage(WKTMessageId.ChamberLeave), SendType.Reliable, sender);
+            }
+            else if (!sender.IsHost) return;
+            WKTBazaar.LeaveHere();
         }
 
         /// <summary>
@@ -721,10 +776,11 @@ namespace WhiteKnuckleTogether {
 
         /// <summary>
         /// Whether a door may open or close here: always while setting itself up, on the host unless it is a gate the grouping
-        /// drives, and on a client only when the host says so.
+        /// drives, and on a client only when the host says so. A chamber's doors are each machine's own: the Bazaar's shuts the
+        /// way out on whoever holds stock they did not pay for.
         /// </summary>
         public bool AllowDoorChange(UT_Door door) {
-            if (DoorStartDepth > 0 || IsDriving) return true;
+            if (DoorStartDepth > 0 || IsDriving || door.GetComponentInParent<M_Chamber>(true) != null) return true;
             return IsHost && !m_gateDoors.Contains(door.GetInstanceID());
         }
 

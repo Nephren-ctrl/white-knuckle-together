@@ -14,6 +14,10 @@ Discord.Sdk.dll -> White Knuckle\White Knuckle_Data\Managed
 
 Facepunch.Steamworks.Win64.dll -> White Knuckle\White Knuckle_Data\Managed
 
+PackageTools.dll -> White Knuckle\White Knuckle_Data\Managed
+
+Drawing.dll -> White Knuckle\White Knuckle_Data\Managed
+
 Rewired_Core.dll -> White Knuckle\White Knuckle_Data\Managed
 
 Unity.TextMeshPro.dll -> White Knuckle\White Knuckle_Data\Managed

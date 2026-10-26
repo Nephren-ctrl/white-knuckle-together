@@ -662,14 +662,11 @@ namespace WhiteKnuckleTogether {
             var orbRadius = CreateDropdown("Orb Radius", dropdowns, WKTLobbyOrbRadiusDropdown.OptionNames);
             if (orbRadius != null) {
                 orbRadius.SetValueWithoutNotify((int)WKT.Instance.Settings.LocalOrbRadiusId);
+                // Shown in every mode: a race's orb, or co-op's with Keep Players Together.
                 orbRadius.gameObject.AddComponent<WKTLobbyOrbRadiusDropdown>();
-                // The dropdown sits in a labelled row: the row is what shows or hides.
-                dropdowns.gameObject.AddComponent<WKTLobbyModeVisibility>().AddRaceOnly(orbRadius.transform.parent.gameObject);
             }
             FitDropdownsToCells(dropdowns);
             SizeGrid(dropdowns);
-            if (dropdowns.TryGetComponent<WKTLobbyModeVisibility>(out var dropdownVisibility))
-                dropdownVisibility.Refresh();
             var modifiers = CreateGrid("Modifiers", lobbySettingRect, c_modifier_columns, m_toggleFab, c_fallback_toggle_height);
             CreateModifierToggle("Iron Knuckle Mode", modifiers, ModifierId.IronKnuckle, false);
             CreateModifierToggle("Hard Mode", modifiers, ModifierId.Hard, false);
@@ -701,6 +698,9 @@ namespace WhiteKnuckleTogether {
             }
             CreateModifierToggle("Proximity Voice", modifiers, ModifierId.ProximityVoice, true);
             CreateModifierToggle("Dead Can Talk", modifiers, ModifierId.DeadCanTalk, true);
+            var keepTogether = CreateModifierToggle("Keep Players Together", modifiers, ModifierId.KeepTogether, false);
+            if (keepTogether != null)
+                modifierVisibility.AddCoopOnly(keepTogether.gameObject);
             modifierVisibility.Refresh();
             SizeGrid(modifiers);
         }
