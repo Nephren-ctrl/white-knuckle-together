@@ -23,11 +23,6 @@ Singleplayer is entirely unaffected.
 
 ## Installation
 
-### Release
-
-1. Download newest release.
-2. Extract contents to White Knuckle folder (overwrite if necessary).
-
 ### Manual
 
 1. Install [BepInEx 5](https://thunderstore.io/c/white-knuckle/p/BepInEx/BepInExPack/) (BepInExPack 5.4.2305) into your White Knuckle folder and launch the game once.
@@ -39,7 +34,7 @@ Singleplayer is entirely unaffected.
 
 - This was originally made for playing with friends, but it's stable enough that I think others can have fun with it.
 - Only the campaign is supported for now.
-- Public lobbies and balancing are not my focus. The mod is meant for playing with friends and helping each other (or racing).
+- Public lobbies and balancing are not my focus, but some effort did go into that. The mod is meant for playing with friends and helping each other (or racing).
 
 ## Building from source
 
@@ -59,6 +54,8 @@ AI was used quite extensively in this mod to integrate hooks, analyze assets, an
 AI is an extremely polarizing topic, yes, but the reality is that reverse engineering every aspect of White Knuckle to synchronize it over the network, while handling every edge case by hand, would take hundreds if not thousands of hours as Dark Machine continues to update the game. It simply isn't feasible for me to do in my spare time.
 
 AI is extremely good at decompiling, analyzing, and labeling packaged content and assemblies. It can figure out which triggers activate which events and how interactions resolve in a massive codebase, and it can inject custom code into those locations. I don't want to offend Dark Machine by creating something with these tools, but I think it's the only viable way for me to implement multiplayer in a reasonable amount of time.
+
+Unless you are inherently against AI programming, give it a try before you assume the quality of the mod.
 
 ## Known issues
 
