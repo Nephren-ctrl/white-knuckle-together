@@ -3,7 +3,7 @@ namespace WhiteKnuckleTogether {
         public const int SEND_RATE = 20;
         public const float SEND_DELTA = 1f / SEND_RATE;
         /// <summary>Bump whenever the wire format of any message changes.</summary>
-        public const ushort PROTOCOL_VERSION = 35;
+        public const ushort PROTOCOL_VERSION = 36;
         /// <summary>Steam's maximum message size (k_cbMaxSteamNetworkingSocketsMessageSizeSend).</summary>
         public const int MAX_MESSAGE_SIZE = 512 * 1024;
         public const int MAX_VERSION_LENGTH = 64;

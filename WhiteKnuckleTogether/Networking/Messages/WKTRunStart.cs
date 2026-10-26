@@ -4,7 +4,7 @@ using WhiteKnuckleTogether.Networking.LiteNetLib;
 namespace WhiteKnuckleTogether {
     /// <summary>
     /// Everything every machine needs to start the same multiplayer run: the world seed, the gamemode, the play mode, what the
-    /// goo follows, the race orb's size, how players collide, the host's lobby modifiers, the shortcuts it ticked, each player's spawn slot, and the shared progression
+    /// goo follows, the race orb's size, how players collide, the host's lobby modifiers, the shortcuts it ticked, the host's clock, each player's spawn slot, and the shared progression
     /// the run is restricted to. The host builds it and
     /// broadcasts it as the StartRun payload, and every machine (the host included) starts the run from it.
     /// </summary>
@@ -38,6 +38,11 @@ namespace WhiteKnuckleTogether {
         /// <see cref="GetOpenShortcutMask"/>.
         /// </summary>
         public byte ShortcutMask { get; set; }
+        /// <summary>
+        /// The host's local <c>DateTime.Now</c> when it started the run, in ticks. Date-gated content (the Halloween season,
+        /// night-time scares) reads this on every machine, so all players get the same world (see <see cref="WKTSharedDate"/>).
+        /// </summary>
+        public long ClockTicks { get; set; }
         public int SlotCount { get; private set; }
         public WKTProgressionProfile SharedProgression { get; } = new();
 
@@ -91,6 +96,7 @@ namespace WhiteKnuckleTogether {
             PlayerCollision = PlayerCollisionId.Soft;
             ModifierMask = 0;
             ShortcutMask = 0;
+            ClockTicks = 0;
             SlotCount = 0;
             SharedProgression.Clear();
         }
@@ -105,6 +111,7 @@ namespace WhiteKnuckleTogether {
             PlayerCollision = other.PlayerCollision;
             ModifierMask = other.ModifierMask;
             ShortcutMask = other.ShortcutMask;
+            ClockTicks = other.ClockTicks;
             SlotCount = other.SlotCount;
             Array.Copy(other.m_slotPlayerIds, m_slotPlayerIds, SlotCount);
             SharedProgression.CopyFrom(other.SharedProgression);
@@ -119,6 +126,7 @@ namespace WhiteKnuckleTogether {
             writer.Put((byte)PlayerCollision);
             writer.Put(ModifierMask);
             writer.Put(ShortcutMask);
+            writer.Put(ClockTicks);
             writer.Put((byte)SlotCount);
             for (var i = 0; i < SlotCount; i++)
                 writer.Put(m_slotPlayerIds[i]);
@@ -128,7 +136,7 @@ namespace WhiteKnuckleTogether {
         /// <summary>
         /// Reads a payload written by <see cref="Write"/> into <paramref name="run"/> (cleared first). Rejects truncated
         /// data, invalid seeds, unknown gamemodes, play modes, goo follows, orb radii, player collisions, modifiers or
-        /// shortcuts, no slots, too many slots, duplicate slot players, and a
+        /// shortcuts, a clock outside DateTime's range, no slots, too many slots, duplicate slot players, and a
         /// malformed profile. On failure the run is left cleared.
         /// </summary>
         public static bool TryRead(NetDataReader reader, WKTRunStart run) {
@@ -147,6 +155,7 @@ namespace WhiteKnuckleTogether {
             if (!reader.TryGetByte(out var playerCollision) || !s_knownPlayerCollisions[playerCollision]) return false;
             if (!reader.TryGetUShort(out var modifierMask) || (modifierMask & ~s_knownModifierMask) != 0) return false;
             if (!reader.TryGetByte(out var shortcutMask) || (shortcutMask & ~WKTShortcuts.AllMask) != 0) return false;
+            if (!reader.TryGetLong(out var clockTicks) || clockTicks < 0 || clockTicks > DateTime.MaxValue.Ticks) return false;
             if (!reader.TryGetByte(out var slotCount) || slotCount == 0 || slotCount > WKTLobbyConsts.MAX_PLAYERS)
                 return false;
             run.Seed = seed;
@@ -157,6 +166,7 @@ namespace WhiteKnuckleTogether {
             run.PlayerCollision = (PlayerCollisionId)playerCollision;
             run.ModifierMask = modifierMask;
             run.ShortcutMask = shortcutMask;
+            run.ClockTicks = clockTicks;
             for (var i = 0; i < slotCount; i++) {
                 if (!reader.TryGetByte(out var playerId) || !run.AddSlot(playerId)) return false;
             }

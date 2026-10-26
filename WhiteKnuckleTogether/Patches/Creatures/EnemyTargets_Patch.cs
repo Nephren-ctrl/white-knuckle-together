@@ -19,8 +19,12 @@ namespace WhiteKnuckleTogether {
         /// <summary>Flashflowers are not among them: each machine flashes them for its own player (see <see cref="WKTHazardSync"/>).</summary>
         private static readonly Type[] s_hazards = { typeof(ENV_DenizenWaveZone), typeof(ENV_TickEggSack), typeof(ENV_KillBubble) };
         private static readonly string[] s_modulePrefixes = { "Denizen", "DEN_", "AI" };
-        /// <summary>Creatures each machine runs for its own player, as in singleplayer (see <see cref="WKTViewerCreatures"/>).</summary>
-        private static readonly Type[] s_perViewer = { typeof(DEN_EngravedDoor), typeof(DEN_Pseudopod) };
+        /// <summary>
+        /// Creatures each machine runs for its own player, as in singleplayer (see <see cref="WKTViewerCreatures"/>), masks,
+        /// which are never shared at all, and bear traps, which only ever hold the player of the machine simulating them
+        /// (see <see cref="WKTBearTraps"/>).
+        /// </summary>
+        private static readonly Type[] s_perViewer = { typeof(DEN_EngravedDoor), typeof(DEN_Pseudopod), typeof(DEN_Mask), typeof(ENV_BearTrap) };
         /// <summary>
         /// Single methods of other types that aim at the local player: a barnacle tongue aiming (hard mode, or tongues set to
         /// aim) goes for the nearest player. The rest of the tongue's code stays as it is, for the tongue sync.

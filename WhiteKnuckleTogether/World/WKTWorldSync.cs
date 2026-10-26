@@ -242,6 +242,7 @@ namespace WhiteKnuckleTogether {
             Instance = null;
             s_puppetEntities.Clear();
             s_localSpawns.Clear();
+            WKTBearTraps.Clear();
             WKTPlayerShots.ClearCosmetic();
             WKTPuppetHitScope.Reset();
             WKTLocalReplayScope.Reset();
@@ -504,9 +505,12 @@ namespace WhiteKnuckleTogether {
             return keyed != null && WKTContentSeeding.TryGetKey(keyed, out key);
         }
 
-        /// <summary>Players and whatever they carry are never world objects, nor is the goo, which <see cref="WKTGooSync"/> shares.</summary>
+        /// <summary>
+        /// Players and whatever they carry are never world objects, nor is the goo, which <see cref="WKTGooSync"/> shares, nor a
+        /// mask, which haunts each player on their own machine.
+        /// </summary>
         private static bool IsReplicated(Component owner) =>
-            owner is not ENT_Player && owner is not DEN_DeathFloor && owner.GetComponentInParent<ENT_Player>(true) == null &&
+            owner is not ENT_Player && owner is not DEN_DeathFloor && owner is not DEN_Mask && owner.GetComponentInParent<ENT_Player>(true) == null &&
             owner.GetComponentInParent<WKTRemotePlayer>(true) == null;
 
         /// <summary>Whether clients should show the object: it is active itself and not in someone's bag.</summary>
@@ -1061,6 +1065,7 @@ namespace WhiteKnuckleTogether {
         /// <summary>Stops this machine simulating <paramref name="identity"/>: another machine's states drive it from now on.</summary>
         public static void MakePuppet(WKTNetIdentity identity) {
             if (identity.IsPuppet) return;
+            WKTBearTraps.OnStopSimulating(identity);
             identity.IsPuppet = true;
             if (identity.Entity != null) {
                 s_puppetEntities.Add(identity.Entity.GetInstanceID());

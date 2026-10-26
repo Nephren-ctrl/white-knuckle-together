@@ -71,6 +71,19 @@ namespace WhiteKnuckleTogether {
                 AccessTools.Method(typeof(WKTViewerCreatures), nameof(WKTViewerCreatures.EnqueueTrackerEffectFromAI)), out var count), count, "DEN_Tracker.Update");
     }
 
+    /// <summary>
+    /// A Tracker that has lingered long enough hits the player it tracks (<c>DEN_Tracker.UpdateFulfilled</c>). The hit itself
+    /// already reaches that player (<see cref="EnemyTargets_Patch"/>); this aims its push from the Tracker at them too, not
+    /// at the player of the machine simulating it.
+    /// </summary>
+    [WKTCriticalPatch(WKTPatchCategory.WorldSync), HarmonyPatch(typeof(DEN_Tracker), "UpdateFulfilled")]
+    internal sealed class TrackerAttackPush_Patch {
+        [UsedImplicitly]
+        private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions) =>
+            GasbagExplodeScan_Patch.Require(WKTCallRewriter.RewriteStoredPlayerTransform(instructions, WKTPlayerReferenceRewriter.TransformFor, out var count),
+                count, "DEN_Tracker.UpdateFulfilled");
+    }
+
     /// <summary>A Teeth fears every player's lights, not just the host's (see <see cref="WKTViewerCreatures.GetFearRating"/>).</summary>
     [WKTCriticalPatch(WKTPatchCategory.WorldSync), HarmonyPatch(typeof(AIC_Teeth_Chase), nameof(AIC_Teeth_Chase.Execute))]
     internal sealed class TeethLightFear_Patch {

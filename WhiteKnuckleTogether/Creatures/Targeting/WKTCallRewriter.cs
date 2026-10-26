@@ -42,6 +42,53 @@ namespace WhiteKnuckleTogether {
         }
 
         /// <summary>
+        /// Replaces every <c>player.transform</c> read from a local that <c>ENT_Player.GetPlayer()</c> (or
+        /// <c>playerObject</c>) was stored in with <c>replacement(this)</c>, where <paramref name="replacement"/> is a static
+        /// method taking the method's own component and returning a <see cref="Transform"/>. Only valid in instance methods
+        /// of components.
+        /// </summary>
+        public static List<CodeInstruction> RewriteStoredPlayerTransform(IEnumerable<CodeInstruction> instructions, MethodInfo replacement, out int count) {
+            var list = new List<CodeInstruction>(instructions);
+            count = 0;
+            var player = -1;
+            for (var i = 0; i + 1 < list.Count; i++) {
+                if (LoadsLocalPlayer(list[i]) && TryGetLocal(list[i + 1], true, out var stored)) {
+                    player = stored;
+                    continue;
+                }
+                if (player < 0 || !TryGetLocal(list[i], false, out var loaded) || loaded != player || !list[i + 1].Calls(GetTransform)) continue;
+                var loadSelf = new CodeInstruction(OpCodes.Ldarg_0);
+                list[i].MoveLabelsTo(loadSelf);
+                list[i].MoveBlocksTo(loadSelf);
+                list[i] = loadSelf;
+                list[i + 1] = new CodeInstruction(OpCodes.Call, replacement);
+                count++;
+            }
+            return list;
+        }
+
+        /// <summary>The local variable a <c>stloc</c> (<paramref name="store"/>) or <c>ldloc</c> instruction names.</summary>
+        private static bool TryGetLocal(CodeInstruction instruction, bool store, out int index) {
+            var opcode = instruction.opcode;
+            index = -1;
+            if (opcode == (store ? OpCodes.Stloc_0 : OpCodes.Ldloc_0)) index = 0;
+            else if (opcode == (store ? OpCodes.Stloc_1 : OpCodes.Ldloc_1)) index = 1;
+            else if (opcode == (store ? OpCodes.Stloc_2 : OpCodes.Ldloc_2)) index = 2;
+            else if (opcode == (store ? OpCodes.Stloc_3 : OpCodes.Ldloc_3)) index = 3;
+            else if (opcode == (store ? OpCodes.Stloc_S : OpCodes.Ldloc_S) || opcode == (store ? OpCodes.Stloc : OpCodes.Ldloc)) {
+                index = instruction.operand switch {
+                    LocalVariableInfo local => local.LocalIndex,
+                    byte value => value,
+                    short value => value,
+                    ushort value => value,
+                    int value => value,
+                    _ => -1
+                };
+            }
+            return index >= 0;
+        }
+
+        /// <summary>
         /// Replaces every call to <paramref name="original"/> with a call to <paramref name="replacement"/>, a static method
         /// taking the same arguments, with the receiver first for an instance method.
         /// </summary>

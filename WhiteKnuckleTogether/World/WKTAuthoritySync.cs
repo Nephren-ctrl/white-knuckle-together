@@ -379,6 +379,7 @@ namespace WhiteKnuckleTogether {
                 if (identity.IsPuppet) {
                     WKTWorldSync.ReleasePuppet(identity);
                     TakeOver(identity, authority);
+                    WKTBearTraps.OnTakenOver(identity);
                     m_sync.Presentation.OnTakenOver(identity);
                 }
                 if (identity.Entity != null && WKTEngagement.Supports(identity.Entity))

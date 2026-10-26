@@ -1101,6 +1101,7 @@ namespace WhiteKnuckleTogether {
             }
             m_runBuffer.Clear();
             m_runBuffer.Seed = UnityEngine.Random.Range(1, WKTRunStart.MAX_SEED);
+            m_runBuffer.ClockTicks = DateTime.Now.Ticks;
             m_runBuffer.Gamemode = gamemodeId;
             m_runBuffer.PlayMode = m_playMode;
             m_runBuffer.GooFollow = m_gooFollow;

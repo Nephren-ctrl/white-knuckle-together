@@ -27,6 +27,8 @@ namespace WhiteKnuckleTogether {
         private const float c_roach_score_bonus = 10f;
         private const string c_pacifying_perk = "Perk_PheromoneGlands";
         private const string c_pacify_flag = "pacifyroaches";
+        /// <summary>The kill type of a player's squish (<c>DEN_Roach.AI</c>). <c>DEN_Roach.Kill</c> reads its info for any other type.</summary>
+        private const string c_squish_kill_type = "player";
         /// <summary>Host only: the player whose claim is being carried out, who already saw the squish, or nobody.</summary>
         private static byte s_claimant = WKTEntityAuthority.NOBODY;
         private readonly WKTWorldSync m_sync;
@@ -94,7 +96,7 @@ namespace WhiteKnuckleTogether {
             if (!roach.canSquish || local.HasPerk(c_pacifying_perk) || CL_GameManager.HasActiveFlag(c_pacify_flag)) return false;
             var tagger = local.GetTagger();
             if (tagger == null || !tagger.HasTagInList(roach.fearTags) || !IsUnderfoot(local, roach.transform.position)) return false;
-            if (!m_sync.RunPredictedKill(identity, static entity => entity.Kill("", null))) return false;
+            if (!m_sync.RunPredictedKill(identity, static entity => entity.Kill(c_squish_kill_type, null))) return false;
             CL_ScoreManager.sessionScore?.AddScore(c_roach_score, c_roach_score, c_roach_score_bonus, 0f, 1);
             return true;
         }
@@ -129,7 +131,7 @@ namespace WhiteKnuckleTogether {
                     DestroySquished(critter.gameObject);
                 }
                 else
-                    entity.Kill("", null);
+                    entity.Kill(entity is DEN_Roach ? c_squish_kill_type : "", null);
             }
             finally {
                 s_claimant = WKTEntityAuthority.NOBODY;

@@ -103,11 +103,12 @@ namespace WhiteKnuckleTogether {
         /// <summary>
         /// Ticks every machine runs for its own player: the Teeth's hands and the Hunter's and Face's overlays on the screen
         /// follow the local camera (see <see cref="WKTViewerCreatures"/>), and the engraved door and pseudopod act on each player
-        /// from their own machine, as in singleplayer.
+        /// from their own machine, as in singleplayer. A bear trap's only counts down until it can catch again.
         /// </summary>
         public static readonly MethodBase[] AllowedOnPuppets = {
             BarnacleTick, AccessTools.Method(typeof(DEN_Teeth), "LateUpdate"), AccessTools.Method(typeof(DEN_Hunter), "LateUpdate"),
-            AccessTools.Method(typeof(DEN_Face), "LateUpdate"), AccessTools.Method(typeof(DEN_EngravedDoor), "Update"), AccessTools.Method(typeof(DEN_Pseudopod), "Update")
+            AccessTools.Method(typeof(DEN_Face), "LateUpdate"), AccessTools.Method(typeof(DEN_EngravedDoor), "Update"), AccessTools.Method(typeof(DEN_Pseudopod), "Update"),
+            AccessTools.Method(typeof(ENV_BearTrap), "LateUpdate")
         };
 
         [UsedImplicitly]
