@@ -14,6 +14,19 @@ namespace WhiteKnuckleTogether {
         }
     }
 
+    /// <summary>
+    /// A hand item going into the bag is switched on in the world before it is moved there. A client must not take it for a
+    /// level object coming back, or its copy of the host's object would replace it.
+    /// </summary>
+    [WKTCriticalPatch(WKTPatchCategory.WorldSync), HarmonyPatch(typeof(Inventory), nameof(Inventory.DropItemFromHand))]
+    internal sealed class InventoryStow_Patch {
+        [UsedImplicitly]
+        private static void Prefix(bool addtoInventory) => WKTWorldSync.IsStowing = WKTWorldSync.Instance != null && (addtoInventory || Inventory.IsShowingInventory());
+
+        [UsedImplicitly]
+        private static void Finalizer() => WKTWorldSync.IsStowing = false;
+    }
+
     /// <summary>A client dropping an item asks the host to make it a world object everyone sees.</summary>
     [WKTCriticalPatch(WKTPatchCategory.WorldSync), HarmonyPatch(typeof(Inventory), nameof(Inventory.DropItemIntoWorld))]
     internal sealed class InventoryDropItemIntoWorld_Patch {

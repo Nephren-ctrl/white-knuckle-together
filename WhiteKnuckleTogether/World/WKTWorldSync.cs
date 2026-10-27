@@ -92,6 +92,8 @@ namespace WhiteKnuckleTogether {
         public static WKTWorldSync? Instance { get; private set; }
         /// <summary>While true, a client's copy of a host object may be killed: the host's kill is being applied.</summary>
         public static bool AllowHostKill { get; private set; }
+        /// <summary>Set while a hand item goes into the bag, which the game shows in the world for a moment first.</summary>
+        public static bool IsStowing { get; set; }
         /// <summary>Set while this machine spawns objects of its own alone, which are marked <see cref="WKTLocalObject"/> as they register.</summary>
         public static int LocalSpawnDepth { get; set; }
         public bool IsHost => m_network.Mode == NetworkMode.Host;
@@ -438,7 +440,7 @@ namespace WhiteKnuckleTogether {
             }
             // A client's bag holds only its own items. The host keeps its bagged items registered, reported as out of the
             // world, so they appear for everyone once dropped.
-            if (!IsHost && IsInInventory(ownerObject)) return;
+            if (!IsHost && (IsStowing || IsInInventory(ownerObject))) return;
             var level = ownerObject.GetComponentInParent<M_Level>(true);
             ulong levelKey = 0;
             // Levels are briefly enabled while generating, before they are keyed. Their objects register the next time

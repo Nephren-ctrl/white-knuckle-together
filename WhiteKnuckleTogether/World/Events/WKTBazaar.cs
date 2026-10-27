@@ -54,7 +54,9 @@ namespace WhiteKnuckleTogether {
                 switch (unityEvent.GetPersistentTarget(i)) {
                     case UT_ChamberLoader loader when method == c_enter && LoadsBazaar(loader):
                     case M_Chamber chamber when method == c_leave && IsBazaar(chamber):
-                    case UT_EventChance chance when followChance && method == c_check && IsHatchEvent(chance.successEvent, false):
+                    // The entrance's chance succeeds with the No Shops binding (a denied scrawl) and enters on failure.
+                    case UT_EventChance chance when followChance && method == c_check &&
+                                                    (IsHatchEvent(chance.successEvent, false) || IsHatchEvent(chance.failEvent, false)):
                         return true;
                 }
             }
