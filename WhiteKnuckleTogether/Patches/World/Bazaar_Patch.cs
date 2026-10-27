@@ -23,16 +23,20 @@ namespace WhiteKnuckleTogether {
 
     /// <summary>
     /// A purchase at the Bazaar's trading post clears the paid items' for-sale state on the buyer's machine only; the host's
-    /// copies are paid too and bound to everyone again (see <see cref="WKTWorldSync.OnLocalPaid"/>).
+    /// copies are paid too and bound to everyone again (see <see cref="WKTWorldSync.OnLocalPaid"/>). A post that destroys
+    /// what the player brings at once does so while <see cref="IsTrading"/>, so a client's are removed by the host too.
     /// </summary>
     [HarmonyPatch(typeof(ENV_Barterer), nameof(ENV_Barterer.TryPurchase))]
     internal sealed class BazaarPurchase_Patch {
         private static readonly List<Item_Object> s_forSale = new();
 
+        public static bool IsTrading { get; private set; }
+
         [UsedImplicitly]
         private static void Prefix(ENV_Barterer __instance) {
             s_forSale.Clear();
             if (WKTWorldSync.Instance == null) return;
+            IsTrading = true;
             foreach (var item in __instance.itemsInZone) {
                 if (item != null && item.itemData != null && item.itemData.HasTag(WKTItemModules.UNPURCHASED))
                     s_forSale.Add(item);
@@ -48,6 +52,31 @@ namespace WhiteKnuckleTogether {
                 }
             }
             s_forSale.Clear();
+        }
+
+        [UsedImplicitly]
+        private static void Finalizer() => IsTrading = false;
+    }
+
+    /// <summary>
+    /// The roach trader takes what a player paid with: it sweeps the items away and destroys them a moment later on the buyer's
+    /// machine. Those a client paid with are the host's world items, so the host removes its copies when the sweep ends, or
+    /// the client would get them back where they lay.
+    /// </summary>
+    [HarmonyPatch(typeof(ENV_RoachTrader), nameof(ENV_RoachTrader.OnPurchase))]
+    internal sealed class BazaarSold_Patch {
+        private static readonly HashSet<Item> s_sold = new();
+
+        /// <summary>Whether <paramref name="item"/> was paid to the trader here, forgetting it: it is being destroyed.</summary>
+        public static bool TakeSold(Item item) => s_sold.Count > 0 && s_sold.Remove(item);
+
+        [UsedImplicitly]
+        private static void Postfix(List<Item_Object> soldItems) {
+            if (WKTWorldSync.Instance is not { IsHost: false } || soldItems == null) return;
+            foreach (var item in soldItems) {
+                if (item != null && item.itemData != null)
+                    s_sold.Add(item.itemData);
+            }
         }
     }
 

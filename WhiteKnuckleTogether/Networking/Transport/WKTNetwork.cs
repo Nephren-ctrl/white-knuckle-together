@@ -96,6 +96,8 @@ namespace WhiteKnuckleTogether {
         /// <summary>Client only: the trinkets the host says everyone has unlocked.</summary>
         private readonly HashSet<string> m_lobbyTrinkets = new();
         private readonly HashSet<string> m_trinketScratch = new();
+        /// <summary>Client only: the Steam accounts the host banned this session, turned away by this machine too if it takes over.</summary>
+        private readonly HashSet<ulong> m_knownBans = new();
         /// <summary>The shortcuts the host ticked, as a client sees them in the lobby data.</summary>
         private byte m_lobbyShortcutsTicked;
         /// <summary>A lobby to join once the main menu loads. Zero when there is none.</summary>
@@ -205,6 +207,7 @@ namespace WhiteKnuckleTogether {
             Messages.Register(WKTMessageId.StartRun, OnStartRunMessage);
             Messages.Register(WKTMessageId.ReturnToLobby, OnReturnToLobbyMessage);
             Messages.Register(WKTMessageId.RestartRun, OnRestartRunMessage);
+            Messages.Register(WKTMessageId.BanList, OnBanListMessage);
             // An invite accepted while the game was closed launches it with the lobby on the command line.
             if (WKTLobbyData.TryGetConnectLobbyId(Environment.GetCommandLineArgs(), out m_pendingLobbyId))
                 WKT.Instance.Logger.LogInfo($"Launched from a Steam invite. Joining lobby with id {m_pendingLobbyId} once the main menu loads.");
@@ -340,6 +343,7 @@ namespace WhiteKnuckleTogether {
             m_joinCode = string.Empty;
             m_lobbyJoinCode = string.Empty;
             Pings.Clear();
+            m_knownBans.Clear();
             m_nextMode = NetworkMode.None;
             if (m_lobbyExists) {
                 m_lobby.Leave();
@@ -657,6 +661,27 @@ namespace WhiteKnuckleTogether {
             if (Mode != NetworkMode.Host || m_server == null || !m_server.KickPlayer(player, ban)) return;
             WKT.Instance.Logger.LogInfo($"{(ban ? "Banned" : "Kicked")} player {player.Id} ({player.friend.Id}).");
             WKTChat.PostEvent($"{WKTChatText.PlayerName(player.Id, player.friend.Name)} was {(ban ? "banned" : "kicked")}.");
+            if (ban)
+                Broadcast(WriteBans(m_server.Banned), SendType.Reliable);
+        }
+
+        /// <summary>Host only: the session's bans, which every client keeps in case it takes over as host.</summary>
+        private NetDataWriter WriteBans(IReadOnlyCollection<ulong> bans) {
+            var writer = BeginMessage(WKTMessageId.BanList);
+            var count = Math.Min(bans.Count, byte.MaxValue);
+            writer.Put((byte)count);
+            foreach (var steamId in bans) {
+                if (count-- == 0) break;
+                writer.Put(steamId);
+            }
+            return writer;
+        }
+
+        private void OnBanListMessage(WKTPlayer sender, NetDataReader reader) {
+            if (Mode != NetworkMode.Client || !sender.IsHost || !reader.TryGetByte(out var count)) return;
+            m_knownBans.Clear();
+            for (var i = 0; i < count && reader.TryGetULong(out var steamId); i++)
+                m_knownBans.Add(steamId);
         }
 
         /// <summary>Host only. Takes every player in the lobby to the trinket screen, or back to the lobby's first screen.</summary>
@@ -889,6 +914,8 @@ namespace WhiteKnuckleTogether {
             m_server = new WKTServer(Messages, m_gameVersion, WKTPlugin.VERSION, m_localProfile, s_logInfo);
             m_server.PlayerConnectedEvent += p => {
                 PublishLobbyMembers();
+                if (m_server.Banned.Count != 0)
+                    SendToPlayer(p, WriteBans(m_server.Banned), SendType.Reliable);
                 OnPlayerConnected?.Invoke(p);
             };
             m_server.PlayerDisconnectedEvent += p => {
@@ -982,6 +1009,10 @@ namespace WhiteKnuckleTogether {
             m_client = null;
             m_socket = SteamNetworkingSockets.CreateRelaySocket<SocketManager>();
             CreateServer();
+            // The old host's bans hold on: a banned player cannot come back through the new host either.
+            foreach (var steamId in m_knownBans)
+                m_server!.Ban(steamId);
+            m_knownBans.Clear();
             m_server!.AdoptSession(localPlayer, client.GetPlayersEnumerable(), oldHost.Id, m_time);
             m_server.IsRunInProgress = Session.IsRunActive;
             m_modifiers.Clear();

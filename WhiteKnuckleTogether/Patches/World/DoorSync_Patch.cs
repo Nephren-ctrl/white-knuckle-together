@@ -18,13 +18,41 @@ namespace WhiteKnuckleTogether {
         }
 
         [UsedImplicitly]
-        private static void Postfix(UT_Door __instance) => WKTDoorSync.Instance?.OnDoorStarted(__instance);
+        private static void Postfix(UT_Door __instance) {
+            WKTDoorSync.Instance?.OnDoorStarted(__instance);
+            WKTSharedMotion.OnDoorStarted(__instance);
+        }
 
         [UsedImplicitly]
         private static void Finalizer(bool __state) {
             if (__state)
                 WKTDoorSync.DoorStartDepth--;
         }
+    }
+
+    /// <summary>
+    /// A timer a client started by itself starts on the host too, whose timers alone fire (see <see cref="WKTDoorSync.OnTimerPlay"/>).
+    /// A repeating timer starting itself again from its own tick is not a start.
+    /// </summary>
+    [HarmonyPatch(typeof(UT_Timer), nameof(UT_Timer.Play))]
+    internal sealed class TimerPlay_Patch {
+        [UsedImplicitly]
+        private static void Prefix(UT_Timer __instance, bool reset) {
+            if (TimerUpdate_Patch.Ticking != __instance)
+                WKTDoorSync.Instance?.OnTimerPlay(__instance, reset);
+        }
+    }
+
+    [HarmonyPatch(typeof(UT_Timer), "Update")]
+    internal sealed class TimerUpdate_Patch {
+        /// <summary>The timer whose Update is running, while it does.</summary>
+        public static UT_Timer? Ticking { get; private set; }
+
+        [UsedImplicitly]
+        private static void Prefix(UT_Timer __instance) => Ticking = __instance;
+
+        [UsedImplicitly]
+        private static void Finalizer() => Ticking = null;
     }
 
     /// <summary>Doors only open and close on the host, which tells clients.</summary>

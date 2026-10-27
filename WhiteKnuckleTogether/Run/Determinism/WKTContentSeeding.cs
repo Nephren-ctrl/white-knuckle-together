@@ -84,13 +84,14 @@ namespace WhiteKnuckleTogether {
 
         /// <summary>
         /// Keys <paramref name="component"/>'s hierarchy from the nearest ancestor with a keyed component, mixed with the
-        /// names and sibling indices on the way down to it, which match on every machine that built the same hierarchy.
+        /// names on the way down to it and each one's place among the siblings of the same name, which match on every machine
+        /// that built the same hierarchy. Runtime spawns and other children coming and going there leave them alone.
         /// </summary>
         private static bool TryKeyFromAncestor(MonoBehaviour component, WKTRandomStreams<Random.State> streams) {
             var path = WKTStableHash.Of(null);
             var current = component.transform;
             for (var depth = 0; depth < c_max_ancestor_depth; depth++) {
-                path = WKTStableHash.Mix(WKTStableHash.Mix(path, WKTStableHash.Of(current.name)), (uint)current.GetSiblingIndex());
+                path = WKTStableHash.Mix(WKTStableHash.Mix(path, WKTStableHash.Of(current.name)), (uint)GetSameNameIndex(current));
                 var parent = current.parent;
                 if (parent == null) return false;
                 if (TryGetAnyKey(parent, streams, out var ancestorKey)) {
@@ -100,6 +101,21 @@ namespace WhiteKnuckleTogether {
                 current = parent;
             }
             return false;
+        }
+
+        /// <summary>How many earlier siblings of <paramref name="transform"/> have its name.</summary>
+        private static int GetSameNameIndex(Transform transform) {
+            var parent = transform.parent;
+            if (parent == null) return 0;
+            var name = transform.name;
+            var index = 0;
+            for (var i = 0; i < parent.childCount; i++) {
+                var sibling = parent.GetChild(i);
+                if (sibling == transform) break;
+                if (sibling.name == name)
+                    index++;
+            }
+            return index;
         }
 
         private static bool TryGetAnyKey(Transform transform, WKTRandomStreams<Random.State> streams, out ulong key) {
@@ -186,6 +202,24 @@ namespace WhiteKnuckleTogether {
             if (s_levelsByKey.TryGetValue(key, out level) && level != null) return true;
             level = null;
             return false;
+        }
+
+        /// <summary>
+        /// The component of type <typeparamref name="T"/> keyed <paramref name="key"/> in the level keyed <paramref name="levelKey"/>,
+        /// if this machine has it: a level object another machine named. Walks the level, so only for rare messages.
+        /// </summary>
+        public static bool TryFind<T>(ulong levelKey, ulong key, List<T> scratch, out T? found) where T : Component {
+            found = null;
+            if (!TryGetLevel(levelKey, out var level)) return false;
+            level!.GetComponentsInChildren(true, scratch);
+            foreach (var component in scratch) {
+                if (component != null && TryGetKey(component, out var componentKey) && componentKey == key) {
+                    found = component;
+                    break;
+                }
+            }
+            scratch.Clear();
+            return found != null;
         }
 
         /// <summary>Forgets the keys of a level about to be destroyed.</summary>

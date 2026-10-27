@@ -14,6 +14,9 @@ namespace WhiteKnuckleTogether {
     internal static class WKTPlayerReferenceRewriter {
         private const BindingFlags c_any = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
         public static readonly MethodInfo TransformFor = AccessTools.Method(typeof(WKTTargets), nameof(WKTTargets.TransformFor));
+        private static readonly FieldInfo s_controller = AccessTools.Field(typeof(ENT_Player), nameof(ENT_Player.cCon));
+        private static readonly MethodInfo s_controllerVelocity = AccessTools.PropertyGetter(typeof(CharacterController), nameof(CharacterController.velocity));
+        private static readonly MethodInfo s_velocityOf = Target(nameof(WKTTargets.VelocityOf));
         /// <summary>Each call on the player, and the <see cref="WKTTargets"/> method taking its receiver, its arguments, then self.</summary>
         public static readonly Dictionary<MethodBase, MethodInfo> CallReplacements = BuildCallReplacements();
         /// <summary>Each field read on the player, and the <see cref="WKTTargets"/> method taking the receiver, then self.</summary>
@@ -38,6 +41,14 @@ namespace WhiteKnuckleTogether {
                     var inserted = InsertSelf(list, i, selfLoader, instruction);
                     list.Insert(i + inserted, new CodeInstruction(OpCodes.Call, TransformFor));
                     i += inserted;
+                    count++;
+                    continue;
+                }
+                if (instruction.opcode == OpCodes.Ldfld && Equals(instruction.operand, s_controller) && i + 1 < list.Count && list[i + 1].Calls(s_controllerVelocity)) {
+                    // player.cCon.velocity, such as a barnacle tongue leading its aim: the target's velocity.
+                    list.RemoveAt(i + 1);
+                    i += InsertSelf(list, i, selfLoader, instruction);
+                    list[i] = new CodeInstruction(OpCodes.Call, s_velocityOf);
                     count++;
                     continue;
                 }

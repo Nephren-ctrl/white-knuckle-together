@@ -15,6 +15,11 @@ namespace WhiteKnuckleTogether {
         public const float LEAVE_RADIUS = 10f;
         /// <summary>How far outside a gathering zone's box a player still counts as in it, for capsules that straddle its edge.</summary>
         public const float ZONE_MARGIN = 0.5f;
+        /// <summary>
+        /// How far outside a gathering zone's box its wait panel still shows: past the gap between a room's box and its doors
+        /// (the Teeth's airlock box stops about 2.5 m short of them), so a player waiting there sees who is missing.
+        /// </summary>
+        public const float PANEL_MARGIN = 4f;
         /// <summary>How far below the Teeth's shaft box still counts as in the shaft: down past its floor.</summary>
         public const float SHAFT_ZONE_BELOW = 13f;
         /// <summary>
@@ -65,6 +70,8 @@ namespace WhiteKnuckleTogether {
         /// <item>The airlock before the Teeth's shaft, which shuts its first door behind whoever walks in.</item>
         /// <item>The computer room past the airlock, which shuts the airlock's second door behind whoever walks in.</item>
         /// <item>The Teeth's shaft, whose door shuts behind whoever enters and only opens once, from a one-press button.</item>
+        /// <item>The Teeth's vent, out of which the first player to climb into the service elevator drives the Teeth away for good
+        /// (and plays it stuck behind them): everyone must be up past the cab's floor, so nobody still in the vent loses it.</item>
         /// <item>The service elevator past the Teeth's vent, which falls (and walls off its shaft) once someone steps out of it.</item>
         /// <item>The first bay of the pier, whose door opens as someone walks up to it, shuts once they walk on, and stays shut
         /// once they reach the bay.</item>
@@ -77,23 +84,25 @@ namespace WhiteKnuckleTogether {
         /// <c>Event</c>, when set, is the only event of the input that waits. <c>Below</c> is how many meters under a zone's box
         /// still count as in it. The shaft's box floats about 11 m above its floor (the game shuts the door once someone climbs
         /// into it), so players standing in the shaft were never counted. <c>Zone</c>, when set, is the path of another trigger
-        /// whose box everyone must be in: the bay door shuts when someone leaves its trigger, once everyone is in the bay.
+        /// whose box everyone must be in: the bay door shuts when someone leaves its trigger, once everyone is in the bay. With
+        /// <c>Above</c>, anywhere above that box's floor will do (see <see cref="GetFloor"/>).
         /// </summary>
-        private static readonly (string Level, string Path, string? Event, bool InZone, float Below, string? Zone)[] s_groupStarts = {
-            ("Campaign_Interlude_Habitation_To_Abyss", "Call Platform", null, false, 0f, null),
-            ("Campaign_Interlude_Habitation_To_Abyss", "Prop_Lever_01_Flip", null, false, 0f, null),
-            ("M3_Habitation_Shaft_Intro", "Entities/Trigger-CenterRoom", null, true, 0f, null),
-            ("M3_Habitation_Shaft_Intro", "Entities/Trigger-RoomEnter", null, true, 0f, null),
-            ("M3_Habitation_Shaft_Intro", "Entities/Trigger-EnterShaft", null, true, SHAFT_ZONE_BELOW, null),
-            ("M3_Habitation_Shaft_To_Pier", "Scripting/Trigger-ElevatorFall", null, true, 0f, null),
-            ("M3_Habitation_Pier_Entrance", "Scripting/Trigger-FirstBayOpen", nameof(UT_TriggerZone.onEnter), true, 0f, null),
-            ("M3_Habitation_Pier_Entrance", "Scripting/Trigger-FirstBayOpen", nameof(UT_TriggerZone.onExit), true, 0f, "Scripting/Trigger-FirstBaySeal"),
-            ("M3_Habitation_Pier_Entrance", "Scripting/Trigger-FirstBaySeal", null, true, 0f, null),
-            ("Campaign_Interlude_Sink_To_Pipeworks", "Exit Trigger", null, true, 0f, null),
-            ("Campaign_Interlude_Chute_To_Habitation", "Entities/Seal Door/Door Seal", null, true, CHUTE_SEAL_ZONE_BELOW, null),
-            ("Campaign_Interlude_Chute_To_Habitation", "Entities/Trigger-EnterShaft", null, true, SHAFT_ZONE_BELOW, null),
-            ("Campaign_Interlude_Duct_To_Abyss", "Scripting/Trigger - Lock and Despawn Remains", null, true, 0f, null),
-            ("Campaign_Interlude_Diver_To_Nest_SafeArea", "ENV_Hunter_StopperDoor/Close Trigger", null, true, 0f, null)
+        private static readonly (string Level, string Path, string? Event, bool InZone, float Below, string? Zone, bool Above)[] s_groupStarts = {
+            ("Campaign_Interlude_Habitation_To_Abyss", "Call Platform", null, false, 0f, null, false),
+            ("Campaign_Interlude_Habitation_To_Abyss", "Prop_Lever_01_Flip", null, false, 0f, null, false),
+            ("M3_Habitation_Shaft_Intro", "Entities/Trigger-CenterRoom", null, true, 0f, null, false),
+            ("M3_Habitation_Shaft_Intro", "Entities/Trigger-RoomEnter", null, true, 0f, null, false),
+            ("M3_Habitation_Shaft_Intro", "Entities/Trigger-EnterShaft", null, true, SHAFT_ZONE_BELOW, null, false),
+            ("M3_Habitation_Shaft_To_Pier", "Scripting/Trigger-ElevatorFall", null, true, 0f, null, false),
+            ("M3_Habitation_Shaft_To_Pier", "Scripting/Trigger-VentDoor", null, true, 0f, "Scripting/Trigger-ElevatorEvacuate", true),
+            ("M3_Habitation_Pier_Entrance", "Scripting/Trigger-FirstBayOpen", nameof(UT_TriggerZone.onEnter), true, 0f, null, false),
+            ("M3_Habitation_Pier_Entrance", "Scripting/Trigger-FirstBayOpen", nameof(UT_TriggerZone.onExit), true, 0f, "Scripting/Trigger-FirstBaySeal", false),
+            ("M3_Habitation_Pier_Entrance", "Scripting/Trigger-FirstBaySeal", null, true, 0f, null, false),
+            ("Campaign_Interlude_Sink_To_Pipeworks", "Exit Trigger", null, true, 0f, null, false),
+            ("Campaign_Interlude_Chute_To_Habitation", "Entities/Seal Door/Door Seal", null, true, CHUTE_SEAL_ZONE_BELOW, null, false),
+            ("Campaign_Interlude_Chute_To_Habitation", "Entities/Trigger-EnterShaft", null, true, SHAFT_ZONE_BELOW, null, false),
+            ("Campaign_Interlude_Duct_To_Abyss", "Scripting/Trigger - Lock and Despawn Remains", null, true, 0f, null, false),
+            ("Campaign_Interlude_Diver_To_Nest_SafeArea", "ENV_Hunter_StopperDoor/Close Trigger", null, true, 0f, null, false)
         };
 
         /// <summary>
@@ -111,6 +120,8 @@ namespace WhiteKnuckleTogether {
         /// must be at the button or have picked a perk there (<c>Computer</c>, its <c>computerID</c>).</item>
         /// <item>The two brake buttons on the roof of the service elevator past the Teeth's vent, which drop it down the shaft
         /// onto the way up from the vent: everyone must be up past its floor, in the cab, on its roof or out of it.</item>
+        /// <item>The button that opens the sewer door into Interlude: Ascent, which stays open (each version has its own copy,
+        /// and _02 a second one from _01's hull).</item>
         /// </list>
         /// </summary>
         private static readonly (string Level, string Path, float Radius, string? Zone, bool Above, string? Computer)[] s_gatheredButtons = {
@@ -121,7 +132,16 @@ namespace WhiteKnuckleTogether {
             ("Campaign_Interlude_Sink_To_Pipeworks", "Scripting/Buttons/Button_Main_Seal", 0f, "UT_SpeedrunTracker", false, null),
             ("Campaign_Interlude_Silo_To_Pipeworks", "M1_Campaign_Silo_To_Pipeworks_01/Level_Hull/Button.002", PERK_BUTTON_RADIUS, null, false, "PIPE"),
             ("M3_Habitation_Shaft_To_Pier", "Service Elevator/Elevator_Service_01/Brake Counter/Prop_Button_04", 0f, "Scripting/Trigger-ElevatorEvacuate", true, null),
-            ("M3_Habitation_Shaft_To_Pier", "Service Elevator/Elevator_Service_01/Brake Counter/Prop_Button_04.01", 0f, "Scripting/Trigger-ElevatorEvacuate", true, null)
+            ("M3_Habitation_Shaft_To_Pier", "Service Elevator/Elevator_Service_01/Brake Counter/Prop_Button_04.01", 0f, "Scripting/Trigger-ElevatorEvacuate", true, null),
+            ("Campaign_Interlude_Pipeworks_To_Habitation_01", "Sections/Interlude 2/M2_Campaign_Pipeworks_To_Habitation_01/Level_Hull/Elevator_Button_Main-SewerDoor",
+                BUTTON_RADIUS, null, false, null),
+            ("Campaign_Interlude_Pipeworks_To_Habitation_02", "Structure_I2_Campaign_Pipeworks_To_Habitation_02/Buttons/Elevator_Button_Main-SewerDoor", BUTTON_RADIUS, null,
+                false, null),
+            ("Campaign_Interlude_Pipeworks_To_Habitation_02",
+                "Structure_I2_Campaign_Pipeworks_To_Habitation_02/Interlude 2/M2_Campaign_Pipeworks_To_Habitation_01/Level_Hull/Elevator_Button_Main-SewerDoor", BUTTON_RADIUS,
+                null, false, null),
+            ("Campaign_Interlude_Pipeworks_To_Habitation_03", "Structure_I2_Campaign_Pipeworks_To_Habitation_03/Buttons/Elevator_Button_Main-SewerDoor", BUTTON_RADIUS, null,
+                false, null)
         };
 
         /// <summary>
@@ -237,10 +257,11 @@ namespace WhiteKnuckleTogether {
         /// Whether a level input starts something every player must be there for (see <see cref="s_groupStarts"/>), and
         /// whether they must all be inside its trigger's box for it (<paramref name="inZone"/>), with how many meters under the
         /// box still count (<paramref name="below"/>). <paramref name="eventName"/> is the input's event field;
-        /// <paramref name="zonePath"/> is the path below the level of another trigger whose box counts instead, or null.
+        /// <paramref name="zonePath"/> is the path below the level of another trigger whose box counts instead, or null, and
+        /// <paramref name="above"/> whether anywhere above that box's floor counts.
         /// </summary>
-        public static bool IsGroupStart(string levelName, string inputPath, string eventName, out bool inZone, out float below, out string? zonePath) {
-            foreach (var (level, path, onlyEvent, zone, zoneBelow, otherZone) in s_groupStarts) {
+        public static bool IsGroupStart(string levelName, string inputPath, string eventName, out bool inZone, out float below, out string? zonePath, out bool above) {
+            foreach (var (level, path, onlyEvent, zone, zoneBelow, otherZone, zoneAbove) in s_groupStarts) {
                 // A zone's entry is that trigger alone, not what hangs under it (the Teeth's distant callout timers).
                 if (!levelName.StartsWith(level, StringComparison.Ordinal) ||
                     (zone ? inputPath != path : inputPath.IndexOf(path, StringComparison.Ordinal) < 0) ||
@@ -248,11 +269,13 @@ namespace WhiteKnuckleTogether {
                 inZone = zone;
                 below = zoneBelow;
                 zonePath = otherZone;
+                above = zoneAbove;
                 return true;
             }
             inZone = false;
             below = 0f;
             zonePath = null;
+            above = false;
             return false;
         }
 
@@ -268,14 +291,14 @@ namespace WhiteKnuckleTogether {
         }
 
         /// <summary>
-        /// Whether <paramref name="position"/> is inside <paramref name="box"/>, give or take <see cref="ZONE_MARGIN"/>, or up to
-        /// <paramref name="below"/> meters under it, enabled or not.
+        /// Whether <paramref name="position"/> is inside <paramref name="box"/>, give or take <paramref name="outside"/> meters, or
+        /// up to <paramref name="below"/> meters under it, enabled or not.
         /// </summary>
-        public static bool IsInZone(BoxCollider box, Vector3 position, float below = 0f) {
+        public static bool IsInZone(BoxCollider box, Vector3 position, float below = 0f, float outside = ZONE_MARGIN) {
             var transform = box.transform;
             var scale = transform.lossyScale;
             var scaleY = Mathf.Max(Mathf.Abs(scale.y), 1e-4f);
-            var margin = new Vector3(ZONE_MARGIN / Mathf.Max(Mathf.Abs(scale.x), 1e-4f), ZONE_MARGIN / scaleY, ZONE_MARGIN / Mathf.Max(Mathf.Abs(scale.z), 1e-4f));
+            var margin = new Vector3(outside / Mathf.Max(Mathf.Abs(scale.x), 1e-4f), outside / scaleY, outside / Mathf.Max(Mathf.Abs(scale.z), 1e-4f));
             return IsInBox(transform.InverseTransformPoint(position), box.center, box.size, margin, below / scaleY);
         }
 
@@ -359,7 +382,7 @@ namespace WhiteKnuckleTogether {
         /// </summary>
         public static bool IsPulledByLoading(WKTLoadPull pull, string? localBranch, string keptBranch) =>
             pull switch {
-                WKTLoadPull.Everyone or WKTLoadPull.Diver => true,
+                WKTLoadPull.Everyone => true,
                 WKTLoadPull.OtherBranches => localBranch != null && keptBranch.Length > 0 && localBranch != keptBranch,
                 _ => false
             };

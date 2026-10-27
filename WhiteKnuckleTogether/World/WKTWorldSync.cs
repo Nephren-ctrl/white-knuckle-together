@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using HarmonyLib;
 using JetBrains.Annotations;
 using Steamworks.Data;
 using UnityEngine;
@@ -39,7 +40,12 @@ namespace WhiteKnuckleTogether {
         private static readonly List<Object> s_localSpawnScratch = new();
         private static readonly HashSet<string> s_unclaimableSpawns = new();
         private static readonly HashSet<string> s_missingPrefabs = new();
+        /// <summary>Prefabs no asset database lists, found among loaded objects by name.</summary>
+        private static readonly Dictionary<string, GameObject> s_loadedPrefabs = new();
+        private static readonly AccessTools.FieldRef<List<CL_AssetManager.WKDatabaseHolder>?> s_assetDatabases =
+            AccessTools.StaticFieldRefAccess<List<CL_AssetManager.WKDatabaseHolder>?>(AccessTools.Field(typeof(CL_AssetManager), "databases"));
         private static readonly List<CL_Handhold> s_handholdScratch = new();
+        private static readonly List<UT_SeamlessTeleporter> s_teleporterScratch = new();
         private readonly Dictionary<ushort, WKTNetIdentity> m_byHandle = new(256);
         private readonly UShortIdPool m_handles = new();
         private readonly WKTEntityStateSender m_sender = new();
@@ -72,6 +78,8 @@ namespace WhiteKnuckleTogether {
         /// <summary>While applying a hit another machine forwarded: who dealt it, and whether their own player did.</summary>
         private byte m_forwardDealer = WKTEntityAuthority.NOBODY;
         private bool m_forwardByPlayer;
+        /// <summary>Host only: the player a client's kill claim being applied credits, for the kill it tells everyone about.</summary>
+        private byte m_claimedKiller = WKTDamageCause.NOBODY;
         private ulong m_runtimeCount;
         private int m_inventoryLayer;
         /// <summary>Client only: the key the object being spawned gets, so it binds to the host's object.</summary>
@@ -113,6 +121,7 @@ namespace WhiteKnuckleTogether {
         public WKTRecyclers Recyclers { get; private set; } = null!;
         public WKTHazardSync Hazards { get; private set; } = null!;
         public WKTLadderSecret Ladder { get; private set; } = null!;
+        public WKTEventSpawns EventSpawns { get; private set; } = null!;
 
         /// <summary>Whether <paramref name="entity"/> is a puppet another machine simulates, whose own logic must not run here.</summary>
         public static bool IsPuppet(GameEntity entity) => s_puppetEntities.Count != 0 && s_puppetEntities.Contains(entity.GetInstanceID());
@@ -151,6 +160,7 @@ namespace WhiteKnuckleTogether {
             Recyclers = new WKTRecyclers(this, m_network);
             Hazards = new WKTHazardSync(this, m_network);
             Ladder = new WKTLadderSecret(this, m_network);
+            EventSpawns = new WKTEventSpawns(this, m_network);
             m_onLevelKeyed = (level, levelKey) => {
                 Pitons.OnLevelKeyed(levelKey);
                 ReturnRebars.OnLevelKeyed(levelKey);
@@ -178,6 +188,8 @@ namespace WhiteKnuckleTogether {
             messages.Register(WKTMessageId.EntityGib, OnEntityGib);
             messages.Register(WKTMessageId.DamageRequest, OnDamageRequest);
             messages.Register(WKTMessageId.EntityStates, OnEntityStates);
+            messages.Register(WKTMessageId.SeamlessTeleport, OnSeamlessTeleport);
+            messages.Register(WKTMessageId.EventSpawn, EventSpawns.OnMessage);
             messages.Register(WKTMessageId.PickupRequest, OnPickupRequest);
             messages.Register(WKTMessageId.PickupResult, OnPickupResult);
             messages.Register(WKTMessageId.DropRequest, OnDropRequest);
@@ -215,6 +227,7 @@ namespace WhiteKnuckleTogether {
             messages.Register(WKTMessageId.HandholdEvent, Handholds.OnEvent);
             messages.Register(WKTMessageId.HandholdHoldTime, Handholds.OnHoldTime);
             messages.Register(WKTMessageId.EntitySound, Sounds.OnSound);
+            messages.Register(WKTMessageId.BuddyLine, Sounds.OnBuddyLine);
             messages.Register(WKTMessageId.EntityUnityEvent, Events.OnEvent);
             messages.Register(WKTMessageId.EntityPresentation, Presentation.OnPresentation);
             messages.Register(WKTMessageId.ClockSync, Clock.OnClockSync);
@@ -223,8 +236,10 @@ namespace WhiteKnuckleTogether {
             messages.Register(WKTMessageId.TeethLightFear, Viewers.OnTeethLightFear);
             messages.Register(WKTMessageId.MotherEnrage, MotherWrath.OnEnrage);
             messages.Register(WKTMessageId.MotherLine, MotherWrath.OnLine);
+            messages.Register(WKTMessageId.MotherGlare, MotherWrath.OnGlare);
             messages.Register(WKTMessageId.EntityInteraction, Events.OnInteraction);
             messages.Register(WKTMessageId.PlayerPerks, Perks.OnPerks);
+            messages.Register(WKTMessageId.PlayerMassBuffs, Perks.OnMassBuffs);
             messages.Register(WKTMessageId.PlayerInventory, Inventories.OnInventory);
             m_onPlayerDisconnected = HandlePlayerDisconnected;
             m_network.OnPlayerDisconnected += m_onPlayerDisconnected;
@@ -263,6 +278,7 @@ namespace WhiteKnuckleTogether {
             Recyclers.Clear();
             Hazards.Clear();
             Ladder.Clear();
+            EventSpawns.Clear();
             WKTSharedMotion.Reset();
             AllowHostKill = false;
             WKTContentSeeding.LevelKeyed -= m_onLevelKeyed;
@@ -276,6 +292,8 @@ namespace WhiteKnuckleTogether {
             messages.Unregister(WKTMessageId.EntityKill);
             messages.Unregister(WKTMessageId.EntityGib);
             messages.Unregister(WKTMessageId.DamageRequest);
+            messages.Unregister(WKTMessageId.SeamlessTeleport);
+            messages.Unregister(WKTMessageId.EventSpawn);
             messages.Unregister(WKTMessageId.EntityStates);
             messages.Unregister(WKTMessageId.PickupRequest);
             messages.Unregister(WKTMessageId.PickupResult);
@@ -314,6 +332,7 @@ namespace WhiteKnuckleTogether {
             messages.Unregister(WKTMessageId.HandholdEvent);
             messages.Unregister(WKTMessageId.HandholdHoldTime);
             messages.Unregister(WKTMessageId.EntitySound);
+            messages.Unregister(WKTMessageId.BuddyLine);
             messages.Unregister(WKTMessageId.EntityUnityEvent);
             messages.Unregister(WKTMessageId.EntityPresentation);
             messages.Unregister(WKTMessageId.ClockSync);
@@ -322,8 +341,10 @@ namespace WhiteKnuckleTogether {
             messages.Unregister(WKTMessageId.TeethLightFear);
             messages.Unregister(WKTMessageId.MotherEnrage);
             messages.Unregister(WKTMessageId.MotherLine);
+            messages.Unregister(WKTMessageId.MotherGlare);
             messages.Unregister(WKTMessageId.EntityInteraction);
             messages.Unregister(WKTMessageId.PlayerPerks);
+            messages.Unregister(WKTMessageId.PlayerMassBuffs);
             messages.Unregister(WKTMessageId.PlayerInventory);
             m_network.OnPlayerDisconnected -= m_onPlayerDisconnected;
             m_network.OnPlayerConnected -= m_onPlayerConnected;
@@ -461,6 +482,7 @@ namespace WhiteKnuckleTogether {
             }
             if (!hasKey) {
                 // Never matched by a host object, and the client may have no world objects of its own.
+                EventSpawns.OnUnmatched(identity);
                 Hide(identity);
                 return;
             }
@@ -549,10 +571,37 @@ namespace WhiteKnuckleTogether {
             }
         }
 
-        private static string GetPrefabId(WKTNetIdentity identity) {
+        /// <summary>
+        /// The id clients spawn an object from (see <see cref="GetPrefab"/>). An entity id no asset database lists (empty, the
+        /// game's default <c>entity</c>, or one only a level's spawner holds the prefab of) is sent as the object's prefab
+        /// name instead.
+        /// </summary>
+        public static string GetPrefabId(WKTNetIdentity identity) {
             if (identity.Item != null && identity.Item.itemData != null && !string.IsNullOrEmpty(identity.Item.itemData.prefabName))
                 return identity.Item.itemData.prefabName;
-            return identity.Entity != null ? identity.Entity.entityPrefabID ?? string.Empty : string.Empty;
+            if (identity.Entity == null) return string.Empty;
+            var id = identity.Entity.entityPrefabID;
+            return IsListedAsset(id) ? id : PrefabNameOf(identity.Entity.gameObject.name);
+        }
+
+        /// <summary>Whether an asset database lists <paramref name="id"/>, checked without the game's warning for unknown ids.</summary>
+        private static bool IsListedAsset(string? id) {
+            if (string.IsNullOrEmpty(id)) return false;
+            // Not set up yet: the id is sent as it is.
+            if (s_assetDatabases() is not { } databases) return true;
+            foreach (var database in databases) {
+                if (database.HasAssetInDictionary(id)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>An instance's name without the <c>(Clone)</c> Unity adds for each copy made from it.</summary>
+        public static string PrefabNameOf(string name) {
+            const string clone = "(Clone)";
+            var end = name.Length;
+            while (end >= clone.Length && string.CompareOrdinal(name, end - clone.Length, clone, 0, clone.Length) == 0)
+                end -= clone.Length;
+            return end == name.Length ? name : name.Substring(0, end).TrimEnd();
         }
 
         public void OnIdentityActivationChanged(WKTNetIdentity identity) {
@@ -664,6 +713,30 @@ namespace WhiteKnuckleTogether {
             if (IsHost)
                 return m_byHandle.TryGetValue(handle, out identity) && identity != null;
             return m_binder.TryGetObject(handle, out identity) && identity != null;
+        }
+
+        #endregion
+
+        #region Seamless teleporters
+
+        /// <summary>Whether this machine moves <paramref name="entity"/> itself: one it simulates, or one only it has.</summary>
+        public bool SimulatesHere(GameEntity entity) =>
+            !entity.TryGetComponent<WKTNetIdentity>(out var identity) || identity.Handle == 0 || Authority.SimulatesHere(identity);
+
+        /// <summary>Client only: the local player went through a seamless teleporter, so the host moves its objects in the box along.</summary>
+        public void OnLocalSeamlessTeleport(UT_SeamlessTeleporter teleporter) {
+            if (IsHost || !WKTContentSeeding.TryGetKey(teleporter, out var key) || teleporter.GetComponentInParent<M_Level>() is not { } level ||
+                !WKTContentSeeding.TryGetLevelKey(level, out var levelKey)) return;
+            var writer = m_network.BeginMessage(WKTMessageId.SeamlessTeleport);
+            writer.Put(levelKey);
+            writer.Put(key);
+            m_network.SendToHost(writer, SendType.Reliable);
+        }
+
+        private void OnSeamlessTeleport(WKTPlayer sender, NetDataReader reader) {
+            if (IsHost && !sender.IsHost && reader.TryGetULong(out var levelKey) && reader.TryGetULong(out var key) &&
+                WKTContentSeeding.TryFind(levelKey, key, s_teleporterScratch, out var teleporter) && teleporter!.destinationTransform != null)
+                SeamlessTeleporter_Patch.Move(teleporter, this, true);
         }
 
         #endregion
@@ -788,7 +861,7 @@ namespace WhiteKnuckleTogether {
 
         /// <summary>
         /// A world object was killed here. The host tells every client, once per object. A client that simulates it claims the
-        /// kill from the host, which decides it for everyone.
+        /// kill from the host, which decides it for everyone. Both say which player's hit killed it, whose machine credits the kill.
         /// </summary>
         public void OnLocalKill(GameEntity entity, string? type, Damageable.DamageInfo? info) {
             if (!entity.TryGetComponent<WKTNetIdentity>(out var identity) || identity.Handle == 0 || identity.KillSent) return;
@@ -801,6 +874,7 @@ namespace WhiteKnuckleTogether {
             var writer = m_network.BeginMessage(WKTMessageId.EntityKill);
             WKTEntityEvent.Damage(identity.Handle, info?.amount ?? 0f, type, WKTWorldOffset.ToWire(position, offset),
                 info?.force ?? Vector3.zero, info?.direction ?? Vector3.zero, WKTEntityEvent.TagsToSend(info?.tags, type)).WriteDamage(writer);
+            writer.Put(m_claimedKiller != WKTDamageCause.NOBODY ? m_claimedKiller : CauseOf(info));
             if (IsHost)
                 m_network.Broadcast(writer, SendType.Reliable);
             else
@@ -828,10 +902,12 @@ namespace WhiteKnuckleTogether {
 
         /// <summary>
         /// A kill from the host, which every client applies, or on the host a kill claim from the client simulating the object,
-        /// which the host applies and then tells everyone about.
+        /// which the host applies and then tells everyone about. The killer's machine credits the kill as the game does for its
+        /// own player's kills (<c>GameEntity.OnKilledByPlayer</c>: the run's kill score), unless it killed it there itself.
         /// </summary>
         private void OnEntityKill(WKTPlayer sender, NetDataReader reader) {
-            if (!WKTEntityEvent.TryReadDamage(reader, out var kill) || !TryGetIdentity(kill.Handle, out var identity) || identity!.Entity == null) return;
+            if (!WKTEntityEvent.TryReadDamage(reader, out var kill) || !reader.TryGetByte(out var killer) || !TryGetIdentity(kill.Handle, out var identity) ||
+                identity!.Entity == null) return;
             if (IsHost ? sender.IsHost || identity.Owner != sender.Id : !sender.IsHost) return;
             var entity = identity.Entity;
             if (entity.dead) return;
@@ -845,12 +921,17 @@ namespace WhiteKnuckleTogether {
             if (!IsHost)
                 m_binder.MarkDead(kill.Handle);
             AllowHostKill = true;
+            if (IsHost)
+                m_claimedKiller = killer;
             try {
                 entity.Kill(kill.DamageType, info);
             }
             finally {
                 AllowHostKill = false;
+                m_claimedKiller = WKTDamageCause.NOBODY;
             }
+            if (killer == m_network.LocalPlayer?.Id)
+                entity.OnKilledByPlayer(info);
             // The death plays out here, as the game runs it: animations, tongues pulling back, parts despawning. The host still
             // decides when the body goes away.
             ReleasePuppet(identity);
@@ -1010,7 +1091,7 @@ namespace WhiteKnuckleTogether {
         }
 
         public WKTNetIdentity? Spawn(WKTEntityBind bind) {
-            var prefab = GetPrefab(bind);
+            var prefab = GetPrefab(bind.Kind, bind.PrefabId);
             if (prefab == null) return null;
             Transform? parent = null;
             // The host's chamber objects go into this machine's own copy of the chamber, which is only spawned into once inside.
@@ -1055,28 +1136,48 @@ namespace WhiteKnuckleTogether {
             WKTItemModules.Unpack(identity.Item.itemData, identity.Item);
         }
 
-        private static GameObject? GetPrefab(WKTEntityBind bind) {
-            if (string.IsNullOrEmpty(bind.PrefabId)) {
-                LogMissingPrefab($"(none, {bind.Kind})");
+        /// <summary>The asset an object of <paramref name="kind"/> is spawned from by its id, or null (logged once) if there is none.</summary>
+        public static GameObject? GetPrefab(WKTNetKind kind, string prefabId) {
+            if (string.IsNullOrEmpty(prefabId)) {
+                LogMissingPrefab($"(none, {kind})");
                 return null;
             }
             GameObject? prefab = null;
             try {
-                prefab = bind.Kind == WKTNetKind.Item ? CL_AssetManager.GetItemObjectPrefab(bind.PrefabId)?.gameObject : null;
+                prefab = kind == WKTNetKind.Item ? CL_AssetManager.GetItemObjectPrefab(prefabId)?.gameObject : null;
                 if (prefab == null)
-                    prefab = CL_AssetManager.GetAssetGameObject(bind.PrefabId);
+                    prefab = CL_AssetManager.GetAssetGameObject(prefabId);
             }
             catch (Exception) {
                 // The asset manager logs and throws for unknown ids.
             }
+            if (prefab == null && kind != WKTNetKind.Item)
+                prefab = FindLoadedPrefab(prefabId);
             if (prefab == null)
-                LogMissingPrefab(bind.PrefabId);
+                LogMissingPrefab(prefabId);
             return prefab;
+        }
+
+        /// <summary>
+        /// A prefab no asset database lists, by name, among the ones in memory: a level holding a spawner for it (drone pods,
+        /// object spawners) has it loaded here too. Searched once per name.
+        /// </summary>
+        private static GameObject? FindLoadedPrefab(string name) {
+            if (s_loadedPrefabs.TryGetValue(name, out var known) && known != null) return known;
+            if (s_missingPrefabs.Contains(name)) return null;
+            foreach (var entity in Resources.FindObjectsOfTypeAll<GameEntity>()) {
+                var candidate = entity.gameObject;
+                // Prefab assets belong to no scene.
+                if (candidate.scene.IsValid() || candidate.transform.parent != null || candidate.name != name) continue;
+                s_loadedPrefabs[name] = candidate;
+                return candidate;
+            }
+            return null;
         }
 
         private static void LogMissingPrefab(string prefabId) {
             if (s_missingPrefabs.Add(prefabId))
-                WKT.Instance.Logger.LogError($"Cannot spawn the host's {prefabId}: no such asset. It stays missing on this client.");
+                WKT.Instance.Logger.LogError($"Cannot spawn {prefabId}: no such asset. It stays missing on this machine.");
         }
 
         public void Hide(WKTNetIdentity identity) => m_hideQueue.Add(identity);
@@ -1303,8 +1404,10 @@ namespace WhiteKnuckleTogether {
                     m_handleScratch.Add(pair.Key);
                     continue;
                 }
+                // What still hangs on the Hadal Diver rides this machine's own diver, built alike everywhere but at its own
+                // point in the dive (see WKTDiverExit): the host's pose of it is on the host's diver.
                 if (!identity!.IsPuppet || identity.SelfDriven || identity.NestedIn != null || !identity.gameObject.activeInHierarchy ||
-                    !pair.Value.TrySample(now, out var pose)) continue;
+                    WKTDiverExit.IsPartOfDiver(identity) || !pair.Value.TrySample(now, out var pose)) continue;
                 identity.transform.SetPositionAndRotation(WKTWorldOffset.FromWire(pose.Position, offset), pose.Rotation);
             }
             foreach (var handle in m_handleScratch)

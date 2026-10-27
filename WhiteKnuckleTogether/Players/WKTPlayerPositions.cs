@@ -20,6 +20,8 @@ namespace WhiteKnuckleTogether {
         /// in is ever unloaded here (see <see cref="WKTHostStreaming.TryUnloadPreviousLevels"/>).
         /// </summary>
         public static bool IsSharedWorld { get; set; }
+        /// <summary>Set while a proximity check that is the local player's alone runs: <see cref="NearestDistance"/> measures only them.</summary>
+        public static bool IsMeasuringLocalOnly { get; set; }
         /// <summary>How many remote players have a known position this frame.</summary>
         public static int RemoteCount { get; private set; }
 
@@ -98,7 +100,7 @@ namespace WhiteKnuckleTogether {
         /// <summary>Replaces <c>CL_GameManager.PlayerDistance</c> in the game's proximity checks: the distance to the nearest player.</summary>
         public static float NearestDistance(CL_GameManager gameManager, Vector3 location) {
             var local = gameManager.PlayerDistance(location);
-            if (!IsCoveringAllPlayers) return local;
+            if (!IsCoveringAllPlayers || IsMeasuringLocalOnly) return local;
             for (var i = 0; i < RemoteCount; i++) {
                 if (s_remoteDead[i]) continue;
                 var distance = Vector3.Distance(s_remotePositions[i], location);

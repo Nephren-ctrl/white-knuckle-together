@@ -49,13 +49,37 @@ namespace WhiteKnuckleTogether {
             eventName != WKTShortcuts.UNLOCK_EVENT || WKTShortcutSync.AllowOpen(__instance);
     }
 
-    /// <summary>The Hadal Diver letting the local player off brings everyone left behind along (see <see cref="WKTDiverExit"/>).</summary>
+    /// <summary>
+    /// The Hadal Diver letting the local player off brings everyone left behind along (see <see cref="WKTDiverExit"/>). Only a
+    /// living rider's ride ends by itself: a spectator's body follows riders about, and their ride ends with the group's.
+    /// </summary>
     [HarmonyPatch(typeof(DEN_HadalDiver), nameof(DEN_HadalDiver.ExitDiver))]
     internal sealed class DiverExit_Patch {
         [UsedImplicitly]
-        private static void Prefix(DEN_HadalDiver __instance) {
-            if (!WKTDiverExit.IsApplying && WKTDoorSync.Instance is { } sync)
-                sync.OnLocalDiverExit(WKTDiverExit.GetExit(__instance));
+        private static bool Prefix(DEN_HadalDiver __instance) {
+            if (WKTDiverExit.IsApplying || WKTDoorSync.Instance is not { } sync) return true;
+            if (ENT_Player.playerObject is { dead: true }) return false;
+            sync.OnLocalDiverExit(WKTDiverExit.GetExit(__instance));
+            return true;
         }
+    }
+
+    /// <summary>
+    /// The diver's own proximity triggers (its exit's <c>Player Mover Target</c>) measure only the local player, whose diver it
+    /// is, not the nearest player as the host's otherwise do (see <see cref="NearestPlayerDistance_Patch"/>): another rider near
+    /// the host's copy would end the host's ride while the host is still falling toward it. A dead player's never fire.
+    /// </summary>
+    [HarmonyPatch(typeof(UT_PlayerTriggerRadius), "FixedUpdate")]
+    internal sealed class DiverTriggerRadius_Patch {
+        [UsedImplicitly]
+        private static bool Prefix(UT_PlayerTriggerRadius __instance) {
+            if (WKTDoorSync.Instance == null || !WKTDiverExit.IsPartOfDiver(__instance)) return true;
+            if (ENT_Player.playerObject is { dead: true }) return false;
+            WKTPlayerPositions.IsMeasuringLocalOnly = true;
+            return true;
+        }
+
+        [UsedImplicitly]
+        private static void Finalizer() => WKTPlayerPositions.IsMeasuringLocalOnly = false;
     }
 }

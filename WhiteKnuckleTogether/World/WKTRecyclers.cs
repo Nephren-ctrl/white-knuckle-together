@@ -65,6 +65,8 @@ namespace WhiteKnuckleTogether {
 
         /// <summary>A recycler pays out, a few seconds after taking an item: to the local player, or to the remote one it was for.</summary>
         public void Pay(ENV_Recycler recycler, int amount, bool global) {
+            // Its cash sound follows this call on the host's copy alone.
+            m_sync.Hazards.OnRecycler(recycler, WKTHazardCall.RecyclerCash);
             var payee = m_payouts.TryGetValue(recycler.GetInstanceID(), out var queue) && queue.Count > 0 ? queue.Dequeue() : WKTEntityAuthority.NOBODY;
             if (payee == WKTEntityAuthority.NOBODY || payee == m_network.LocalPlayer?.Id) {
                 CL_GameManager.AddRoaches(amount, global);

@@ -185,6 +185,10 @@ namespace WhiteKnuckleTogether {
 
         public static Camera CamOf(ENT_Player player, Component? self) => TryGetRemote(self, out var proxy) ? proxy!.Head : player.cam;
 
+        /// <summary>Replaces reading <c>player.cCon.velocity</c>: a remote player's is how fast their stand-in moves.</summary>
+        public static Vector3 VelocityOf(ENT_Player player, Component? self) =>
+            TryGetRemote(self, out var proxy) && IsLocalPlayer(player) ? proxy!.GetTrueVelocity() : player.cCon.velocity;
+
         /// <summary>Replaces reading <c>entity.dead</c>.</summary>
         public static bool DeadOf(GameEntity entity, Component? self) =>
             TryGetRemote(self, out var proxy) && IsLocalPlayer(entity) ? proxy!.dead : entity.dead;

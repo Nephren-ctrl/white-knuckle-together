@@ -11,8 +11,8 @@ namespace WhiteKnuckleTogether {
     /// Host only, in a shared world: the perks of other players that act on the world act on it for everyone, as the
     /// host's own already do.
     /// <list type="bullet">
-    /// <item>The shared goo goes as fast or as slow as everyone's mass perks make it (Mass Damper, Employee Retention and
-    /// Motivator, Paranoia).</item>
+    /// <item>The shared goo goes as fast or as slow as everyone's mass buffs make it (Mass Damper, Employee Retention and
+    /// Motivator, Paranoia, and the same buffs from items or events), and their mass controller perks.</item>
     /// <item>Item spawners (Friends Upstairs' briefcases) and hunters (Binding: Hunted) spawn by each player who has them,
     /// on the host, so everyone sees them. Clients never run their own copies.</item>
     /// </list>
@@ -62,10 +62,18 @@ namespace WhiteKnuckleTogether {
             foreach (var playerId in WKTPlayerPerks.Players) {
                 var perks = WKTPlayerPerks.Get(playerId);
                 if (perks == null || WKTPlayerDeaths.IsDead(playerId) || !WKTPlayerPositions.TryGetRemotePosition(playerId, out var position)) continue;
+                // The buffs the player's machine reports count whatever gave them; until it does, their perks' are summed here.
+                var reported = WKTPlayerPerks.TryGetMassBuffs(playerId, out var mass);
+                if (reported) {
+                    otherSpeed += mass.x;
+                    otherResist += mass.y;
+                    otherSlow += mass.z;
+                }
                 foreach (var pair in perks) {
                     var perk = WKTPerkAssets.Get(pair.Key);
                     if (perk == null) continue;
-                    AddMassBuffs(perk, pair.Value, ref otherSpeed, ref otherResist, ref otherSlow);
+                    if (!reported)
+                        AddMassBuffs(perk, pair.Value, ref otherSpeed, ref otherResist, ref otherSlow);
                     RunModules(perk, playerId, position, ref controller);
                     if (!HasFlag(perk, c_hunt_flag) || position.y <= leashHeight) continue;
                     leashHeight = position.y;

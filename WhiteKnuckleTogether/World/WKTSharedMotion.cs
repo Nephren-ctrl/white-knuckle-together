@@ -68,6 +68,17 @@ namespace WhiteKnuckleTogether {
                 mover.moveObject.gameObject.SetActive(false);
         }
 
+        /// <summary>
+        /// A door set itself up. The normal mode security fields (Lab_02 and Lab_04) are raised up their rooms by a door on the
+        /// field itself, which stops at the top with the field still on, blocking the way on. It switches off there instead,
+        /// on every machine, as each opens its own copy.
+        /// </summary>
+        public static void OnDoorStarted(UT_Door door) {
+            // SecurityField is the only object with UT_InstantDeath.
+            if (IsActive && door.TryGetComponent<UT_InstantDeath>(out _))
+                door.finishOpenEvent.AddListener(() => door.gameObject.SetActive(false));
+        }
+
         public static void AfterMoverAwake(UT_PathMover mover) {
             if (!IsActive || !mover.loop || !mover.active) return;
             if (!WKTSharedClock.IsReady) {

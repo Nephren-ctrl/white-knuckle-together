@@ -35,7 +35,37 @@ namespace WhiteKnuckleTogether {
             if (roaches == null) return true;
             var card = s_selected(__instance);
             if (card == null || card.perk == null || !card.CanAfford()) return true;
-            return roaches.BeforePurchase(__instance, card.perk.cost);
+            return roaches.BeforePurchase(card.perk.cost, static (page, _) => ((App_PerkPage)page).PurchaseSelected(), __instance);
+        }
+    }
+
+    /// <summary>With shared roaches, a perk page refresh is only bought once the host holds the roaches back for it.</summary>
+    [HarmonyPatch(typeof(App_PerkPage), nameof(App_PerkPage.PurchaseRefresh))]
+    internal sealed class SharedRoachRefresh_Patch {
+        private static readonly AccessTools.FieldRef<App_PerkPage, bool> s_fulfilled = AccessTools.FieldRefAccess<App_PerkPage, bool>("fullfilled");
+
+        [UsedImplicitly]
+        private static bool Prefix(App_PerkPage __instance) {
+            var roaches = WKTSharedRoaches.Instance;
+            if (roaches == null || s_fulfilled(__instance) || CL_GameManager.GetRoaches() < __instance.refreshCost) return true;
+            return roaches.BeforePurchase(__instance.refreshCost, static (page, _) => ((App_PerkPage)page).PurchaseRefresh(), __instance);
+        }
+    }
+
+    /// <summary>With shared roaches, a vending machine item is only bought once the host holds the roaches back for it.</summary>
+    [HarmonyPatch(typeof(ENV_VendingMachine), nameof(ENV_VendingMachine.Buy), typeof(int), typeof(bool), typeof(bool))]
+    internal sealed class SharedRoachVending_Patch {
+        private static readonly AccessTools.FieldRef<ENV_VendingMachine, bool> s_dead = AccessTools.FieldRefAccess<ENV_VendingMachine, bool>("dead");
+        private static readonly AccessTools.FieldRef<ENV_VendingMachine, bool> s_blocked = AccessTools.FieldRefAccess<ENV_VendingMachine, bool>("isBlocked");
+
+        [UsedImplicitly]
+        private static bool Prefix(ENV_VendingMachine __instance, int i, bool force, bool free) {
+            var roaches = WKTSharedRoaches.Instance;
+            // Only a purchase the game would make is held back; the rest plays its own deny or broken sound.
+            if (roaches == null || force || free || s_dead(__instance) || s_blocked(__instance)) return true;
+            var button = __instance.buttons[i];
+            if (!button.available || button.purchase.price > CL_GameManager.GetRoaches()) return true;
+            return roaches.BeforePurchase(button.purchase.price, static (machine, index) => ((ENV_VendingMachine)machine).Buy(index), __instance, i);
         }
     }
 

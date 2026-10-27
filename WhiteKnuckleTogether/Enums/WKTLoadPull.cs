@@ -11,8 +11,8 @@ namespace WhiteKnuckleTogether {
         /// <summary>Every branch but the trigger's is deleted (<c>DeleteOtherBranches</c>): only whoever is on another branch.</summary>
         OtherBranches,
         /// <summary>
-        /// The Hadal Diver let its riders off: everyone left behind ends their own diver's ride, which builds the branch it
-        /// leads to, and is brought over (see <see cref="WKTDiverExit"/>).
+        /// The Hadal Diver let its riders off: everyone else ends their own diver's ride, whose exit builds the branch it leads
+        /// to and takes them into it (see <see cref="WKTDiverExit"/>). Nobody is pulled on top of that.
         /// </summary>
         Diver
     }

@@ -202,7 +202,7 @@ namespace WhiteKnuckleTogether {
             }
         }
 
-        private static WKTListenerMasks Sort(UnityEventBase unityEvent, Transform root) {
+        public static WKTListenerMasks Sort(UnityEventBase unityEvent, Transform root) {
             var masks = default(WKTListenerMasks);
             var count = unityEvent.GetPersistentEventCount();
             for (var i = 0; i < count; i++) {

@@ -14,7 +14,7 @@ namespace WhiteKnuckleTogether {
         private const float c_out_of_reach = 1000f;
         private static readonly Dictionary<byte, WKTPlayerProxy> s_byPlayer = new();
         private static readonly HashSet<int> s_colliders = new();
-        private Collider? m_collider;
+        private CapsuleCollider? m_collider;
 
         public byte PlayerId { get; private set; }
         /// <summary>The remote player's body this stands in for.</summary>
@@ -57,7 +57,7 @@ namespace WhiteKnuckleTogether {
         public static Vector3 ClosestPointUnlessProxy(Collider collider, Vector3 point) =>
             IsProxyCollider(collider) ? point + Vector3.up * c_out_of_reach : collider.ClosestPoint(point);
 
-        /// <summary>Gives a remote player's body a proxy shaped like <paramref name="localPlayer"/>.</summary>
+        /// <summary>Gives a remote player's body a proxy shaped like <paramref name="localPlayer"/>, until it is given its own shape (see <see cref="SetShape"/>).</summary>
         public static WKTPlayerProxy Create(Transform remoteRoot, byte playerId, ENT_Player localPlayer) {
             var root = new GameObject($"WKT Proxy {playerId}");
             root.SetActive(false);
@@ -99,6 +99,21 @@ namespace WhiteKnuckleTogether {
         /// </summary>
         [UsedImplicitly]
         private void ShakeCamera(float amount) { }
+
+        /// <summary>
+        /// Shapes the proxy like the remote player's own controller, sized by their size buffs and crouch: its capsule, in the
+        /// body's space, and the height of the eyes enemies aim at.
+        /// </summary>
+        public void SetShape(float radius, float height, float center, float eyeHeight) {
+            if (m_collider != null) {
+                m_collider.radius = radius;
+                m_collider.height = height;
+                m_collider.center = new Vector3(0f, center, 0f);
+            }
+            var head = Head.transform;
+            var eyes = head.localPosition;
+            head.localPosition = new Vector3(eyes.x, eyeHeight, eyes.z);
+        }
 
         /// <summary>Mirrors whether the player is dead, so enemies stop going for them.</summary>
         public void SetDead(bool isDead) => dead = isDead;

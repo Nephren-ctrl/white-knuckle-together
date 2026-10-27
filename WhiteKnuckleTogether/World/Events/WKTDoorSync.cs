@@ -35,6 +35,8 @@ namespace WhiteKnuckleTogether {
         private const float c_group_start_cooldown = 10f;
         /// <summary>How far above a trigger's bottom its room is looked up, so a bottom resting on a level's entrance counts in that level.</summary>
         private const float c_room_probe_height = 0.1f;
+        /// <summary>What the Hadal Diver and its entry triggers hang under, until the diver unparents itself.</summary>
+        private const string c_diver_root = "HadalDiver_Root";
         /// <summary>
         /// <c>UT_Timer</c> fires by itself on every machine, at times that drift apart, such as Delta Labs' power fluctuation
         /// switching lights and turrets. Only the host's timers fire; clients run what the host's did.
@@ -61,6 +63,7 @@ namespace WhiteKnuckleTogether {
         private readonly List<KeyValuePair<ulong, M_Level>> m_levelScratch = new();
         private readonly List<UT_Door> m_doorScratch = new();
         private readonly List<MonoBehaviour> m_behaviourScratch = new();
+        private readonly List<UT_Timer> m_timerScratch = new();
         private readonly HashSet<int> m_computerLevers = new();
         private readonly List<EventRef> m_eventScratch = new();
         private readonly List<ulong> m_keyScratch = new();
@@ -80,6 +83,8 @@ namespace WhiteKnuckleTogether {
         private readonly HashSet<(ulong, byte)> m_loadPulls = new();
         /// <summary>Group starts the local player set off, waiting for everyone (see <see cref="UpdateWaitingStarts"/>).</summary>
         private readonly List<(EventRef Reference, Transform? Argument)> m_waiting = new();
+        /// <summary>Security field triggers the local player passed before everyone was through (see <see cref="UpdateWaitingPasses"/>).</summary>
+        private readonly List<(EventRef Reference, Transform? Argument)> m_waitingPasses = new();
         private WKTNetwork m_network = null!;
         private Action<M_Level, ulong> m_onLevelKeyed = null!;
         private Action<M_Level> m_onLevelForgetting = null!;
@@ -121,6 +126,7 @@ namespace WhiteKnuckleTogether {
             m_network.Messages.Register(WKTMessageId.ChamberLeave, OnChamberLeave);
             m_network.Messages.Register(WKTMessageId.MovingPart, OnMovingPart);
             m_network.Messages.Register(WKTMessageId.GatherPull, OnGatherPull);
+            m_network.Messages.Register(WKTMessageId.TimerPlay, OnTimerPlayMessage);
             m_onLevelKeyed = IndexLevel;
             m_onLevelForgetting = ForgetLevel;
             m_onPlayerConnected = HandlePlayerConnected;
@@ -151,6 +157,7 @@ namespace WhiteKnuckleTogether {
             m_network.Messages.Unregister(WKTMessageId.EventApplied);
             m_network.Messages.Unregister(WKTMessageId.MovingPart);
             m_network.Messages.Unregister(WKTMessageId.GatherPull);
+            m_network.Messages.Unregister(WKTMessageId.TimerPlay);
             m_network.Messages.Unregister(WKTMessageId.ButtonState);
             m_network.Messages.Unregister(WKTMessageId.PerkPicked);
             m_network.Messages.Unregister(WKTMessageId.ChamberLeave);
@@ -183,6 +190,7 @@ namespace WhiteKnuckleTogether {
                 Buttons.Update();
                 m_oneWayDoors.Update();
                 UpdateWaitingStarts();
+                UpdateWaitingPasses();
                 // Level scripting held back while the loader generated runs once it is done.
                 if (m_pendingApplied.Count > 0)
                     ApplyPendingEvents();
@@ -209,7 +217,8 @@ namespace WhiteKnuckleTogether {
             level.GetComponentsInChildren(true, m_behaviourScratch);
             WKTComputerLevers.Collect(level, m_computerLevers);
             foreach (var behaviour in m_behaviourScratch) {
-                if (behaviour == null || (Array.IndexOf(s_inputTypes, behaviour.GetType()) < 0 && !IsDoorDamage(behaviour))) continue;
+                if (behaviour == null || (Array.IndexOf(s_inputTypes, behaviour.GetType()) < 0 && !IsDoorDamage(behaviour) && !IsLevelPickup(behaviour) &&
+                                           !IsLoadingController(behaviour) && behaviour is not DEN_Mother)) continue;
                 // A creature's own buttons run on the machine simulating it (see WKTEntityEvents). A computer's lever is each
                 // player's own, so its events run where it was pulled, as in singleplayer (see WKTComputerLevers).
                 if (behaviour is CL_Button and not CL_ToggleButton && behaviour.GetComponentInParent<Denizen>(true) != null ||
@@ -244,15 +253,18 @@ namespace WhiteKnuckleTogether {
             var zone = input as UT_TriggerZone;
             var playerZone = zone != null && WKTWorldWiring.IsTriggeredByPlayers(zone.entityTags);
             var triggeredByPlayers = playerZone || input is UT_HandTrigger;
+            var diverRide = playerZone && IsDiverRide(input);
             for (var index = 0; index < s_inputEvents.Count && index <= byte.MaxValue; index++) {
                 var (unityEvent, name) = s_inputEvents[index];
-                if (unityEvent == null) continue;
+                if (unityEvent == null || (input is Item_Object && name != nameof(Item_Object.pickupEvent)) ||
+                    (input is UT_EventController && !WKTGatherCheck.IsLoading(unityEvent)) || (input is DEN_Mother && name != nameof(DEN_Mother.angerEvent))) continue;
                 var count = unityEvent.GetPersistentEventCount();
                 var masks = default(WKTListenerMasks);
                 var drivesGoo = false;
                 for (var i = 0; i < count; i++) {
                     var target = unityEvent.GetPersistentTarget(i);
-                    if (target == null) {
+                    // Mother's glare is only for the player she crushes (see WKTMotherWrath).
+                    if (target == null || (input is DEN_Mother && target is UT_ForceCameraLookAt)) {
                         masks = masks.WithSkipped(i);
                         continue;
                     }
@@ -266,16 +278,17 @@ namespace WhiteKnuckleTogether {
                     }
                     else if (input is UT_TriggerZone && LooksLikeDoor(target))
                         WarnUnknownDoor(level, target, method);
-                    masks = masks.With(i, WKTWorldWiring.IsLocalTarget(target.GetType()) || IsOnPlayer(target) || (playerZone && IsComputerKeyboard(target)));
+                    masks = masks.With(i, diverRide || WKTWorldWiring.IsLocalTarget(target.GetType()) || IsOnPlayer(target) || (playerZone && IsComputerKeyboard(target)) ||
+                        (input is Item_Object && IsUnder(target, input.transform)));
                 }
                 var buildsBranch = WKTGatherCheck.CallsGenerator(unityEvent);
                 var listed = WKTGatherCheck.IsGroupStart(level.name, WKTGatherCheck.PathBelow(input.transform, level.transform), name, out var inZone, out var below,
-                    out var zonePath);
+                    out var zonePath, out var above);
                 var zoneOwner = zonePath != null ? level.transform.Find(zonePath) : input.transform;
                 var gatherZone = inZone && zoneOwner != null && zoneOwner.TryGetComponent<BoxCollider>(out var box) ? box : null;
                 var reference = new EventRef(key, (byte)index, unityEvent, input, masks, name, levelId, WKTGatherCheck.WaitsForGroup(listed, buildsBranch, masks),
                     buildsBranch, drivesGoo, gatherZone, below, WKTGatherCheck.IsLoading(unityEvent), WKTGatherCheck.GetLoadPull(unityEvent),
-                    input is UT_TriggerZone && WKTGatherCheck.IsPassStart(level.name, WKTGatherCheck.PathBelow(input.transform, level.transform)));
+                    input is UT_TriggerZone && WKTGatherCheck.IsPassStart(level.name, WKTGatherCheck.PathBelow(input.transform, level.transform)), above);
                 m_events[unityEvent] = reference;
                 m_eventsByKey[(key, (byte)index)] = reference;
             }
@@ -283,8 +296,8 @@ namespace WhiteKnuckleTogether {
         }
 
         /// <summary>
-        /// An input's events, numbered the same on every machine: its serialized event fields, then for a timer each of its
-        /// intermediate events.
+        /// An input's events, numbered the same on every machine: its serialized event fields, then for a lever each snap point's,
+        /// for an event controller each sequence's and for a timer each of its intermediate events.
         /// </summary>
         private static void CollectInputEvents(MonoBehaviour input, List<(UnityEventBase Event, string Name)> events) {
             events.Clear();
@@ -295,6 +308,10 @@ namespace WhiteKnuckleTogether {
                     events.Add((snaps[i]?.onEntered!, $"{nameof(CL_HoldLever.snapPoints)}[{i}].onEntered"));
                     events.Add((snaps[i]?.onExited!, $"{nameof(CL_HoldLever.snapPoints)}[{i}].onExited"));
                 }
+            }
+            if (input is UT_EventController { events: { } containers }) {
+                for (var i = 0; i < containers.Count; i++)
+                    events.Add((containers[i]?.playEvents!, $"{nameof(UT_EventController.events)}[{i}].{nameof(UT_EventController.EventContainer.playEvents)}"));
             }
             if (input is not UT_Timer { otherEvents: { } intermediates }) return;
             for (var i = 0; i < intermediates.Count; i++)
@@ -388,6 +405,35 @@ namespace WhiteKnuckleTogether {
             return false;
         }
 
+        /// <summary>
+        /// A placed item whose first pickup changes the level, such as the Rotten Duct key waking the Rat King or a powercell
+        /// counted by its objective. Whoever picks it up sets it off on their machine, so it goes through the host like a button.
+        /// Only its <c>pickupEvent</c> is indexed; its other events show the item itself. Each player's own copy of a placed
+        /// progression pickup (<see cref="WKTInstancedItems"/>) keeps its pickup to them.
+        /// </summary>
+        private static bool IsLevelPickup(MonoBehaviour behaviour) =>
+            behaviour is Item_Object { pickupEvent: { } pickup } item && pickup.GetPersistentEventCount() > 0 && item.GetComponentInParent<Denizen>(true) == null &&
+            !WKTInstancedItems.IsInstanced(item);
+
+        /// <summary>
+        /// An event sequence that makes the levels again or drops them, such as the Lost Pier fissure's, which a player's blink
+        /// into it plays (<c>ENV_WarpFissure.onBlinkTeleport</c> → <c>UT_EventController.PlayAllEvents</c>). It goes through the
+        /// host like a trigger's, so every machine makes the same levels. Only its loading sequences are indexed.
+        /// </summary>
+        private static bool IsLoadingController(MonoBehaviour behaviour) {
+            if (behaviour is not UT_EventController { events: { } containers }) return false;
+            foreach (var container in containers) {
+                if (container?.playEvents != null && WKTGatherCheck.IsLoading(container.playEvents)) return true;
+            }
+            return false;
+        }
+
+        private static bool IsUnder(UnityEngine.Object target, Transform root) => target switch {
+            GameObject gameObject => gameObject.transform.IsChildOf(root),
+            Component component => component.transform.IsChildOf(root),
+            _ => false
+        };
+
         private static bool LooksLikeDoor(UnityEngine.Object target) =>
             target is not UT_Door && target.name.IndexOf("door", StringComparison.OrdinalIgnoreCase) >= 0;
 
@@ -412,6 +458,18 @@ namespace WhiteKnuckleTogether {
                 if (button.activeEvent.GetPersistentTarget(i) is OS_Computer_Interface) return true;
             }
             return false;
+        }
+
+        /// <summary>
+        /// A trigger of the Hadal Diver's own (its <c>Activate Pull</c> under <see cref="c_diver_root"/>, its <c>EnterDomain</c>):
+        /// each pulls the player who reaches it onto the diver, takes them into its chamber and starts the dive. Every machine
+        /// rides its own diver (see <see cref="WKTDiverExit"/>), so each runs only for whoever reached it, on their machine;
+        /// run everywhere, they would drag the players still on the platform against its rail.
+        /// </summary>
+        private static bool IsDiverRide(Component input) {
+            if (input.GetComponentInParent<DEN_HadalDiver>(true) != null) return true;
+            var parent = input.transform.parent;
+            return parent != null && parent.name == c_diver_root;
         }
 
         private void ForgetLevel(M_Level level) {
@@ -463,7 +521,11 @@ namespace WhiteKnuckleTogether {
         public bool OnInvoke(UnityEventBase unityEvent, Transform? argument) {
             if (IsApplying || !m_events.TryGetValue(unityEvent, out var reference)) return true;
             // A security field goes off only for whoever passes its trigger last (see WKTGatherCheck.IsPassStart).
-            if (reference.PassStart && !m_network.Session.IsRace && !WKTGatherCheck.AllAbove(WKTGatherCheck.GetPassHeight(reference.Owner))) return false;
+            if (reference.PassStart && !m_network.Session.IsRace && !WKTGatherCheck.AllAbove(WKTGatherCheck.GetPassHeight(reference.Owner))) {
+                if (!IsWaitingPass(reference))
+                    m_waitingPasses.Add((reference, argument));
+                return false;
+            }
             if (reference.LoadPull != WKTLoadPull.None)
                 PullForLoading(reference, argument);
             // Racers never wait for, or are pulled to, whoever got there first.
@@ -483,11 +545,13 @@ namespace WhiteKnuckleTogether {
             return StartGroup(reference, argument);
         }
 
-        /// <summary>Whether everyone a group start waits for is there: inside its zone, or else around the local player.</summary>
-        private static bool IsGathered(EventRef reference, out int near, out int living) =>
-            reference.Zone != null
-                ? WKTGatherCheck.AllInZone(reference.Zone, reference.ZoneBelow, out near, out living)
-                : WKTGatherCheck.AllNearLocal(out near, out living);
+        /// <summary>Whether everyone a group start waits for is there: inside (or above) its zone, or else around the local player.</summary>
+        private static bool IsGathered(EventRef reference, out int near, out int living) {
+            if (reference.Zone == null) return WKTGatherCheck.AllNearLocal(out near, out living);
+            return reference.ZoneAbove
+                ? WKTGatherCheck.AllAbove(WKTGatherCheck.GetFloor(reference.Zone), out near, out living)
+                : WKTGatherCheck.AllInZone(reference.Zone, reference.ZoneBelow, out near, out living);
+        }
 
         /// <summary>A group start runs: the others are pulled to the local player first if it builds a branch.</summary>
         private bool StartGroup(EventRef reference, Transform? argument) {
@@ -550,8 +614,11 @@ namespace WhiteKnuckleTogether {
             if (pull != WKTLoadPull.None) {
                 // This player's own pass through the same trigger brings nobody again.
                 m_loadPulls.Add((key, index));
-                if (pull == WKTLoadPull.Diver)
-                    WKTDiverExit.EndLocalRide();
+                if (pull == WKTLoadPull.Diver) {
+                    // The game's own exit takes everyone on into the branch it builds.
+                    WKTDiverExit.EndLocalRide(center);
+                    return;
+                }
                 var loader = WorldLoader.instance;
                 var localBranch = loader != null ? loader.GetCurrentBranch()?.id : null;
                 if (WKTGatherCheck.IsPulledByLoading(pull, localBranch, keptBranch))
@@ -563,8 +630,8 @@ namespace WhiteKnuckleTogether {
         }
 
         /// <summary>
-        /// The Hadal Diver let the local player off near <paramref name="exit"/>: everyone left behind is brought there, however
-        /// far (see <see cref="WKTDiverExit"/>).
+        /// The Hadal Diver let the local player off, who got on at <paramref name="exit"/>: everyone else's ride ends too (see
+        /// <see cref="WKTDiverExit"/>).
         /// </summary>
         public void OnLocalDiverExit(Vector3 exit) {
             if (m_network.Session.IsRace) return;
@@ -614,7 +681,8 @@ namespace WhiteKnuckleTogether {
                 if (!IsGathered(reference, out var near, out var living)) {
                     if (reference.Zone == null)
                         WKTWaitHud.Report(WKTGatherCheck.WAIT_NEAR, near, living);
-                    else if (WKTGatherCheck.IsInZone(reference.Zone, local.transform.position, reference.ZoneBelow))
+                    else if (reference.ZoneAbove ? local.transform.position.y >= WKTGatherCheck.GetFloor(reference.Zone)
+                                 : WKTGatherCheck.IsInZone(reference.Zone, local.transform.position, reference.ZoneBelow, WKTGatherCheck.PANEL_MARGIN))
                         WKTWaitHud.Report(WKTGatherCheck.WAIT_IN_ROOM, near, living);
                     continue;
                 }
@@ -623,6 +691,32 @@ namespace WhiteKnuckleTogether {
                 Apply(reference, argument, true);
                 Apply(reference, argument, false);
             }
+        }
+
+        /// <summary>
+        /// A trigger fires once per machine, so a security field trigger the local player passed while someone was still below
+        /// goes off here once everyone is above it, in case the last one through found someone gone back down.
+        /// </summary>
+        private void UpdateWaitingPasses() {
+            for (var i = m_waitingPasses.Count - 1; i >= 0; i--) {
+                var (reference, argument) = m_waitingPasses[i];
+                if (reference.Owner == null || ENT_Player.playerObject is not { dead: false } || m_applied.WasApplied(reference.Key, reference.Index)) {
+                    m_waitingPasses.RemoveAt(i);
+                    continue;
+                }
+                if (!WKTGatherCheck.AllAbove(WKTGatherCheck.GetPassHeight(reference.Owner))) continue;
+                m_waitingPasses.RemoveAt(i);
+                if (!Dispatch(reference, argument)) continue;
+                Apply(reference, argument, true);
+                Apply(reference, argument, false);
+            }
+        }
+
+        private bool IsWaitingPass(EventRef reference) {
+            foreach (var (waiting, _) in m_waitingPasses) {
+                if (waiting == reference) return true;
+            }
+            return false;
         }
 
         private bool IsWaiting(EventRef reference) {
@@ -674,6 +768,35 @@ namespace WhiteKnuckleTogether {
             return false;
         }
 
+        /// <summary>
+        /// Client only: a timer whose world events only the host fires (see <see cref="s_inputTypes"/>) was started here by
+        /// something only this machine ran, rather than by the host's events replayed here. The host starts its own, so it
+        /// fires for everyone.
+        /// </summary>
+        public void OnTimerPlay(UT_Timer timer, bool reset) {
+            if (IsHost || IsApplying || !FiresForWorld(timer) || !WKTContentSeeding.TryGetKey(timer, out var key) ||
+                timer.GetComponentInParent<M_Level>(true) is not { } level || !WKTContentSeeding.TryGetLevelKey(level, out var levelKey)) return;
+            var writer = m_network.BeginMessage(WKTMessageId.TimerPlay);
+            writer.Put(levelKey);
+            writer.Put(key);
+            writer.Put(reset);
+            m_network.SendToHost(writer, SendType.Reliable);
+        }
+
+        private bool FiresForWorld(UT_Timer timer) {
+            if (timer.endEvent != null && m_events.TryGetValue(timer.endEvent, out var reference) && reference.Masks.HasWorld) return true;
+            foreach (var intermediate in timer.otherEvents) {
+                if (intermediate?.timeEvent != null && m_events.TryGetValue(intermediate.timeEvent, out reference) && reference.Masks.HasWorld) return true;
+            }
+            return false;
+        }
+
+        private void OnTimerPlayMessage(WKTPlayer sender, NetDataReader reader) {
+            if (IsHost && !sender.IsHost && reader.TryGetULong(out var levelKey) && reader.TryGetULong(out var key) && reader.TryGetBool(out var reset) &&
+                WKTContentSeeding.TryFind(levelKey, key, m_timerScratch, out var timer))
+                timer!.Play(reset);
+        }
+
         /// <summary>A transform argument is whoever set off a trigger: only the local player's body or hands count.</summary>
         private static bool IsFromLocalPlayer(Transform? argument) {
             if (argument is not { } transform) return true;
@@ -683,13 +806,14 @@ namespace WhiteKnuckleTogether {
 
         private void OnEventRelay(WKTPlayer sender, NetDataReader reader) {
             if (!IsHost || sender.IsHost || !reader.TryGetULong(out var key) || !reader.TryGetByte(out var index)) return;
-            if (!m_eventsByKey.TryGetValue((key, index), out var reference) || !reference.Masks.HasWorld || reference.Owner == null) return;
+            // A picked up item may be gone from here already; its pickup still runs.
+            if (!m_eventsByKey.TryGetValue((key, index), out var reference) || !reference.Masks.HasWorld || (reference.Owner == null && !reference.Pickup)) return;
             if (reference.GroupStart) {
                 if (IsRecentGroupStart(reference)) return;
                 m_groupStarts[(reference.Key, reference.Index)] = Time.unscaledTime;
             }
             if (!m_applied.Record(reference.Key, reference.Index, reference.LevelId, IsOnce(reference))) return;
-            Apply(reference, reference.Owner.transform, true);
+            Apply(reference, reference.Owner != null ? reference.Owner.transform : null, true);
             BroadcastApplied(reference);
         }
 
@@ -712,10 +836,10 @@ namespace WhiteKnuckleTogether {
 
         /// <summary>Client only: runs the world part of an event the host applied, once for once-only events.</summary>
         private void ApplyFromHost(EventRef reference) {
-            if (reference.Owner == null || !m_applied.Record(reference.Key, reference.Index, reference.LevelId, IsOnce(reference))) return;
+            if ((reference.Owner == null && !reference.Pickup) || !m_applied.Record(reference.Key, reference.Index, reference.LevelId, IsOnce(reference))) return;
             if (reference.GroupStart)
                 m_groupStarts[(reference.Key, reference.Index)] = Time.unscaledTime;
-            Apply(reference, reference.Owner.transform, true);
+            Apply(reference, reference.Owner != null ? reference.Owner.transform : null, true);
             // A timer's local part runs here too, since this client's own timer never fires.
             if (reference.Autonomous && reference.Masks.HasLocal)
                 Apply(reference, reference.Owner.transform, false);
@@ -742,16 +866,19 @@ namespace WhiteKnuckleTogether {
                 WKTUnityEventFields.InvokeFiltered(reference.Event, argument, reference.Masks, world);
             }
             catch (Exception e) {
-                WKT.Instance.Logger.LogError($"Event {reference.FieldName} of {reference.Owner.name} threw: {e}");
+                WKT.Instance.Logger.LogError($"Event {reference.FieldName} of {(reference.Owner != null ? reference.Owner.name : reference.Key.ToString())} threw: {e}");
             }
             finally {
                 IsApplying = false;
             }
         }
 
-        /// <summary>Whether the event runs only once: its own trigger only ever fires it once, or it changes the shared goo.</summary>
+        /// <summary>
+        /// Whether the event runs only once: its own trigger only ever fires it once, it changes the shared goo, it is an item's
+        /// first pickup, or it starts a security field, which several machines may set off at once (see <see cref="UpdateWaitingPasses"/>).
+        /// </summary>
         private static bool IsOnce(EventRef reference) {
-            if (reference.DrivesGoo) return true;
+            if (reference.DrivesGoo || reference.Pickup || reference.PassStart) return true;
             var owner = reference.Owner;
             if (owner == null) return false;
             var runOnce = GetOnceFields(owner.GetType()).RunOnce;
@@ -986,6 +1113,8 @@ namespace WhiteKnuckleTogether {
             public readonly BoxCollider? Zone;
             /// <summary>How many meters under <see cref="Zone"/> still count as in it.</summary>
             public readonly float ZoneBelow;
+            /// <summary>Anywhere above <see cref="Zone"/>'s floor counts, in it or not (see <see cref="WKTGatherCheck.GetFloor"/>).</summary>
+            public readonly bool ZoneAbove;
             /// <summary>Changes the shared goo, so runs once however many players set it off (see <see cref="WKTWorldWiring.IsGooTarget"/>).</summary>
             public readonly bool DrivesGoo;
             /// <summary>Changes which levels the route has, so never runs while the loader generates (see <see cref="WKTGatherCheck.IsLoading"/>).</summary>
@@ -994,16 +1123,19 @@ namespace WhiteKnuckleTogether {
             public readonly WKTLoadPull LoadPull;
             /// <summary>Sets off a security field, so only goes off once everyone passed its trigger (see <see cref="WKTGatherCheck.IsPassStart"/>).</summary>
             public readonly bool PassStart;
+            /// <summary>A placed item's first pickup (see <see cref="IsLevelPickup"/>), which runs once even after the item is gone.</summary>
+            public readonly bool Pickup;
 
             public EventRef(ulong key, byte index, UnityEventBase unityEvent, MonoBehaviour owner, WKTListenerMasks masks, string fieldName, int levelId,
                             bool groupStart = false, bool pullsGroup = false, bool drivesGoo = false, BoxCollider? zone = null, float zoneBelow = 0f,
-                            bool loads = false, WKTLoadPull loadPull = WKTLoadPull.None, bool passStart = false) {
+                            bool loads = false, WKTLoadPull loadPull = WKTLoadPull.None, bool passStart = false, bool zoneAbove = false) {
                 GroupStart = groupStart;
                 PassStart = passStart;
                 Loads = loads;
                 LoadPull = loadPull;
                 Zone = zone;
                 ZoneBelow = zoneBelow;
+                ZoneAbove = zoneAbove;
                 PullsGroup = pullsGroup;
                 DrivesGoo = drivesGoo;
                 Key = key;
@@ -1014,6 +1146,7 @@ namespace WhiteKnuckleTogether {
                 FieldName = fieldName;
                 LevelId = levelId;
                 Autonomous = owner is UT_Timer or UT_RandomTimer;
+                Pickup = owner is Item_Object;
             }
         }
 

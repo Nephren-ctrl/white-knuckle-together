@@ -219,6 +219,12 @@ namespace WhiteKnuckleTogether {
             return true;
         }
 
+        /// <summary>The Steam accounts banned this session.</summary>
+        public IReadOnlyCollection<ulong> Banned => m_banned;
+
+        /// <summary>Turns a Steam account away for the rest of the session, such as one the old host banned before this machine took over.</summary>
+        public void Ban(ulong steamId) => m_banned.Add(steamId);
+
         public bool TryGetPlayer(byte id, out WKTPlayer player) => m_playerMap.TryGetValue(id, out player);
 
         public IEnumerable<WKTPlayer> GetPlayersEnumerable() => m_playerMap.Values;

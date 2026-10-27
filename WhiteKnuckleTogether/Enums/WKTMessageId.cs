@@ -22,7 +22,7 @@ namespace WhiteKnuckleTogether {
         EntityDespawn = 20,
         /// <summary>Host to clients, reliable: a world object was activated or deactivated. Payload: handle, active.</summary>
         EntityActivation = 21,
-        /// <summary>Host to clients, reliable: a world object was killed. Payload: <see cref="WKTEntityEvent"/> damage.</summary>
+        /// <summary>Host to clients, or a client's claim to the host, reliable: a world object was killed. Payload: <see cref="WKTEntityEvent"/> damage, killer id.</summary>
         EntityKill = 22,
         /// <summary>Client to host, reliable: the client hit a world object. Payload: <see cref="WKTEntityEvent"/> damage.</summary>
         DamageRequest = 23,
@@ -405,6 +405,43 @@ namespace WhiteKnuckleTogether {
         /// Client to host, reliable: the client paid for a Bazaar item, which the host marks paid and binds to everyone again
         /// (see <see cref="WKTWorldSync.OnLocalPaid"/>). Payload: the handle.
         /// </summary>
-        ItemPaid = 116
+        ItemPaid = 116,
+        /// <summary>
+        /// Client to host, reliable: the client went through a seamless teleporter, and the host moves its own objects in the
+        /// teleporter's box along (see <see cref="SeamlessTeleporter_Patch"/>). Payload: level key, teleporter key.
+        /// </summary>
+        SeamlessTeleport = 117,
+        /// <summary>
+        /// Client to host, reliable: a session event's locator spawner made enemies on the client, which the host spawns for
+        /// everyone (see <see cref="WKTEventSpawns"/>). Payload: level key, locator id, the place's spawn index, count, then
+        /// each one's asset id, position and rotation.
+        /// </summary>
+        EventSpawn = 118,
+        /// <summary>
+        /// Client to host, reliable: the client's mass buffs, whatever gave them, which the shared goo goes by (see
+        /// <see cref="WKTPlayerPerks"/>). Payload: speed, resist and slow sums.
+        /// </summary>
+        PlayerMassBuffs = 119,
+        /// <summary>
+        /// Client to host, reliable: something only the client ran started a timer whose world events only the host fires,
+        /// and the host starts its own (see <see cref="WKTDoorSync.OnTimerPlay"/>). Payload: level key, timer key, reset.
+        /// </summary>
+        TimerPlay = 120,
+        /// <summary>
+        /// Host to clients, reliable: the Steam accounts banned this session, kept by every client so a player who takes over
+        /// as host turns them away too. Payload: count, then each Steam id.
+        /// </summary>
+        BanList = 121,
+        /// <summary>
+        /// Client to host and host to clients near the drone, reliable: the Buddy drone said an event line, which it plays
+        /// straight from an audio clip rather than a named sound (see <see cref="WKTEntitySounds.BeforeBuddyLine"/>). Payload:
+        /// entity handle, clip name.
+        /// </summary>
+        BuddyLine = 122,
+        /// <summary>
+        /// Host to one client, reliable: the host's Mother started crushing that client, whose camera she now pulls toward her
+        /// (see <see cref="WKTMotherWrath.OnGlare"/>). Payload: entity handle.
+        /// </summary>
+        MotherGlare = 123
     }
 }

@@ -28,6 +28,8 @@ namespace WhiteKnuckleTogether {
         private const float c_return_timeout = 8f;
         /// <summary>How long the local player waits for the host to answer a claim before the prompt shows again.</summary>
         private const double c_claim_timeout = 2.0;
+        /// <summary>How fast a rebar whose wall went away, with nobody to fly back to, starts falling.</summary>
+        private const float c_drop_speed = 8f;
         private static readonly AccessTools.FieldRef<Projectile, Vector3> s_velocity = AccessTools.FieldRefAccess<Projectile, Vector3>("velocity");
         private static readonly AccessTools.FieldRef<Projectile, Item?> s_sourceItem = AccessTools.FieldRefAccess<Projectile, Item?>("sourceItem");
         private static readonly AccessTools.FieldRef<Projectile_ReturnRebar, bool> s_hasHitSurface =
@@ -136,6 +138,12 @@ namespace WhiteKnuckleTogether {
             if (IsApplying || !rebar.TryGetComponent<WKTReturnRebarCopy>(out var copy) || !m_registry.TryGet(copy.Id, out var entry)) return true;
             if (entry.Recaller != WKTReturnRebarRegistry.NOBODY) return false;
             var local = LocalId;
+            // The wall it sat in went away with no living thrower to send it back to: the host drops it until it sticks again.
+            if (m_sync.IsHost && IsWallLost(rebar) && (entry.Thrown.IsOwnerless || WKTPlayerDeaths.IsDead(entry.Thrown.Owner) ||
+                                                       !m_network.TryGetPlayer(entry.Thrown.Owner, out _))) {
+                Drop(copy);
+                return false;
+            }
             var localDead = WKTPlayerDeaths.IsDead(local);
             if (entry.Thrown.Owner == local && !entry.Thrown.IsOwnerless) {
                 report = !localDead;
@@ -201,6 +209,21 @@ namespace WhiteKnuckleTogether {
         }
 
         /// <summary>The local player died while the rebar flew back to them: it flies on with no owner.</summary>
+        /// <summary>Whether the wall a rebar is soft-parented to was switched off, which is what starts the game's return then.</summary>
+        private static bool IsWallLost(Projectile_ReturnRebar rebar) =>
+            s_softParent(rebar) is { parent: { } wall } && !wall.gameObject.activeInHierarchy;
+
+        /// <summary>Host only: lets a rebar fall from where it is, with no owner, until it sticks somewhere again.</summary>
+        private void Drop(WKTReturnRebarCopy copy) {
+            var hostId = HostId;
+            var position = copy.Rebar.transform.position;
+            var velocity = Vector3.down * c_drop_speed;
+            var wirePosition = WKTWorldOffset.ToWire(position, WKTWorldOffset.Get());
+            if (!m_registry.Release(copy.Id, hostId, hostId, false, wirePosition, velocity)) return;
+            ApplyRelease(copy, position, velocity);
+            Send(new WKTReturnRebarEvent(copy.Id, WKTReturnRebarEvent.RELEASED, hostId, 0, wirePosition, Quaternion.identity, velocity));
+        }
+
         private void ReleaseLocal(WKTReturnRebarCopy copy) {
             var local = LocalId;
             var position = copy.Rebar.transform.position;

@@ -38,10 +38,11 @@ namespace WhiteKnuckleTogether {
 
         /// <summary>
         /// Whether the level <paramref name="room"/> exists here and is active, as the game keeps the levels around the player, or
-        /// for a chamber whether the local player is in one too.
+        /// for a chamber whether the local player is in one too. A dead player is let out of the Hadal Diver's chamber, yet
+        /// still spectates its riders on the local diver (see <see cref="WKTPlatforms"/>) for as long as it is here.
         /// </summary>
         public static bool IsLoadedHere(ulong room) => room == CHAMBER
-            ? IsInChamber()
+            ? IsInChamber() || (DEN_HadalDiver.instance != null && ENT_Player.playerObject is { dead: true })
             : room != UNKNOWN && WKTContentSeeding.TryGetLevel(room, out var level) && level != null && level.gameObject.activeInHierarchy;
 
         /// <summary>Whether the local player is in a chamber: while one is active, the game spawns what is dropped into it.</summary>

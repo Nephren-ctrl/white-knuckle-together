@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using HarmonyLib;
 
 namespace WhiteKnuckleTogether {
     /// <summary>
@@ -9,7 +10,8 @@ namespace WhiteKnuckleTogether {
     /// the game rolls on first use: the text a note shows (<c>Item_Data_Text_Random</c>) and its sprite in hand
     /// (<c>Item_Data_HandSprite</c>). Those are packed into the data as extra entries before it is sent and unpacked where it
     /// arrives, so the same note reads the same for everyone. So is a Bazaar item not yet paid for (<c>ENV_RoachTrader</c>):
-    /// its "unpurchased" tag, its price, and the tags that keep it on its stand.
+    /// its "unpurchased" tag, its price, and the tags that keep it on its stand. And so is a stopwatch's overcharge
+    /// (<c>Item_Object_Rewind</c>), which slows rewinds started one after another, so passing it on does not clear it.
     /// </summary>
     internal static class WKTItemModules {
         /// <summary>An entry is "wktmod&lt;module index&gt;:&lt;kind&gt;&lt;value&gt;". No type the game reads is a suffix of it.</summary>
@@ -19,8 +21,11 @@ namespace WhiteKnuckleTogether {
         /// <summary>A shop item's entry, "wktmodshop:&lt;worth&gt;". It parses as no module.</summary>
         public const string SHOP = PREFIX + "shop:";
         public const string UNPURCHASED = "unpurchased";
+        /// <summary>A stopwatch's entry, "wktmodrewind:&lt;overcharge&gt;". It parses as no module.</summary>
+        public const string REWIND = PREFIX + "rewind:";
         private const string c_locked_tag = "ItemLocked";
         private const string c_vended_tag = "Vended";
+        private static readonly AccessTools.FieldRef<Item_Object_Rewind, float> s_overcharge = AccessTools.FieldRefAccess<Item_Object_Rewind, float>("overcharge");
 
         /// <summary>Writes the item's module and shop state into its data, replacing what was packed before.</summary>
         public static void Pack(Item? item) {
@@ -31,6 +36,8 @@ namespace WhiteKnuckleTogether {
                 item.data ??= new List<string>();
                 item.data.Add(SHOP + item.worth.ToString(CultureInfo.InvariantCulture));
             }
+            if (item.GetDropObject(false) is Item_Object_Rewind rewind && s_overcharge(rewind) > 0f)
+                (item.data ??= new List<string>()).Add(REWIND + s_overcharge(rewind).ToString(CultureInfo.InvariantCulture));
             if (item.dataModules == null) return;
             for (var i = 0; i < item.dataModules.Count; i++) {
                 switch (item.dataModules[i]) {
@@ -53,11 +60,18 @@ namespace WhiteKnuckleTogether {
         public static void Unpack(Item? item, Item_Object? worldObject = null) {
             if (item == null) return;
             var forSale = false;
+            var target = worldObject != null ? worldObject : item.GetDropObject(false);
             if (item.data != null) {
                 foreach (var entry in item.data) {
                     if (TryParseShop(entry, out var worth)) {
                         forSale = true;
                         item.worth = worth;
+                        continue;
+                    }
+                    if (entry != null && entry.StartsWith(REWIND, StringComparison.Ordinal)) {
+                        if (target is Item_Object_Rewind rewind &&
+                            float.TryParse(entry.Substring(REWIND.Length), NumberStyles.Float, CultureInfo.InvariantCulture, out var overcharge) && overcharge >= 0f)
+                            s_overcharge(rewind) = overcharge;
                         continue;
                     }
                     if (item.dataModules == null || !TryParse(entry, out var module, out var kind, out var value) || module >= item.dataModules.Count) continue;
@@ -74,7 +88,7 @@ namespace WhiteKnuckleTogether {
                     }
                 }
             }
-            SetForSale(item, forSale, worldObject != null ? worldObject : item.GetDropObject(false));
+            SetForSale(item, forSale, target);
         }
 
         /// <summary>Someone paid for a shop item: it is no longer for sale, as the game's own purchase leaves it.</summary>

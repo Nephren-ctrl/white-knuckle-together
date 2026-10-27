@@ -19,7 +19,11 @@ namespace WhiteKnuckleTogether {
         /// <summary>A flashflower flashes (<c>ENV_Flashflower.StartFlash</c>).</summary>
         FlowerFlash,
         /// <summary>A signal orchid is killed (its <c>UT_Damage.Kill</c>), which grows its vine or drops its rope.</summary>
-        OrchidKill
+        OrchidKill,
+        /// <summary>A recycler destroys what it took (its <c>recycleEvent</c>: sparks, a shake and its sound).</summary>
+        RecyclerRecycle,
+        /// <summary>A recycler pays out (its <c>cashEvent</c>: its sound).</summary>
+        RecyclerCash
     }
 
     /// <summary>
@@ -32,6 +36,9 @@ namespace WhiteKnuckleTogether {
     /// <item>A flashflower flashes for everyone when it flashes for anyone looking at it.</item>
     /// <item>A signal orchid killed by anyone dies for everyone, so its grabbable vine grows (or rope drops) everywhere. Kills
     /// are remembered for players who join later and for levels built later.</item>
+    /// <item>Only the host's recyclers run (see <see cref="WKTRecyclers"/>), so each recycle and payout plays its effects on
+    /// every client's copy too, and the per-tag events that went off: what they show (a grub's gore and alarm, an explosion,
+    /// which hurts each player by their own copy) and the recycler stopping. Their drones and score stay the host's.</item>
     /// </list>
     /// Every machine runs a strike or flash itself, and each player is only hurt by their own copy (it runs in
     /// <see cref="WKTSharedEffectScope"/>). Owned by <see cref="WKTWorldSync"/>.
@@ -143,6 +150,26 @@ namespace WhiteKnuckleTogether {
                 Broadcast(flower, WKTHazardCall.FlowerFlash, null);
         }
 
+        /// <summary>
+        /// Host only: a recycler destroyed what it took or paid out, so every client's copy shows it too. <paramref name="tags"/>
+        /// has a bit for each of its per-tag events that went off (see <see cref="RecycleTags"/>).
+        /// </summary>
+        public void OnRecycler(ENV_Recycler recycler, WKTHazardCall call, byte tags = 0) => Broadcast(recycler, call, null, tags);
+
+        /// <summary>A bit for each of a recycler's per-tag events (up to 8) that <paramref name="tagger"/> sets off, as the game picks them.</summary>
+        public static byte RecycleTags(ENV_Recycler recycler, ObjectTagger? tagger) {
+            byte tags = 0;
+            if (tagger == null) return tags;
+            for (var i = 0; i < recycler.recycleEvents.Count && i < 8; i++) {
+                foreach (var tag in recycler.recycleEvents[i].eventTags) {
+                    if (!tagger.HasTag(tag)) continue;
+                    tags |= (byte)(1 << i);
+                    break;
+                }
+            }
+            return tags;
+        }
+
         #endregion
 
         #region Orchids
@@ -200,11 +227,13 @@ namespace WhiteKnuckleTogether {
 
         #endregion
 
-        private void Broadcast(MonoBehaviour hazard, WKTHazardCall call, WKTPlayer? except) {
+        private void Broadcast(MonoBehaviour hazard, WKTHazardCall call, WKTPlayer? except, byte tags = 0) {
             if (!WKTContentSeeding.TryGetKey(hazard, out var key)) return;
             var writer = m_network.BeginMessage(WKTMessageId.HazardCall);
             writer.Put(key);
             writer.Put((byte)call);
+            if (call == WKTHazardCall.RecyclerRecycle)
+                writer.Put(tags);
             if (m_sync.IsHost)
                 m_network.Broadcast(writer, SendType.Reliable, except);
             else
@@ -212,8 +241,10 @@ namespace WhiteKnuckleTogether {
         }
 
         public void OnHazardCall(WKTPlayer sender, NetDataReader reader) {
-            if (!reader.TryGetULong(out var key) || !reader.TryGetByte(out var callByte) || callByte > (byte)WKTHazardCall.OrchidKill) return;
+            if (!reader.TryGetULong(out var key) || !reader.TryGetByte(out var callByte) || callByte > (byte)WKTHazardCall.RecyclerCash) return;
             var call = (WKTHazardCall)callByte;
+            byte tags = 0;
+            if (call == WKTHazardCall.RecyclerRecycle && !reader.TryGetByte(out tags)) return;
             if (m_sync.IsHost) {
                 // Only flashes and orchid kills come from clients: the host decides walls and lightning.
                 if (sender.IsHost || call is not (WKTHazardCall.FlowerFlash or WKTHazardCall.OrchidKill)) return;
@@ -225,10 +256,10 @@ namespace WhiteKnuckleTogether {
             if (hazard == null) return;
             if (m_sync.IsHost)
                 Broadcast(hazard, call, sender);
-            Run(hazard, call);
+            Run(hazard, call, tags);
         }
 
-        private void Run(MonoBehaviour hazard, WKTHazardCall call) {
+        private void Run(MonoBehaviour hazard, WKTHazardCall call, byte tags = 0) {
             m_replaying = true;
             try {
                 switch (call) {
@@ -245,10 +276,34 @@ namespace WhiteKnuckleTogether {
                     case WKTHazardCall.OrchidKill when hazard is UT_Damage damage:
                         KillOrchid(damage);
                         break;
+                    case WKTHazardCall.RecyclerRecycle when hazard is ENV_Recycler recycler && !m_sync.IsHost:
+                        recycler.recycleEvent.Invoke();
+                        RunRecycleEvents(recycler, tags);
+                        break;
+                    case WKTHazardCall.RecyclerCash when hazard is ENV_Recycler recycler && !m_sync.IsHost:
+                        recycler.cashEvent.Invoke();
+                        break;
                 }
             }
             finally {
                 m_replaying = false;
+            }
+        }
+
+        /// <summary>
+        /// Runs here the part of a recycler's per-tag events that went off on the host which only belongs to the recycler (see
+        /// <see cref="WKTEntityEvents.Sort"/>): what they show, and its own stopping. Its drone spawner and score stay the host's.
+        /// </summary>
+        private static void RunRecycleEvents(ENV_Recycler recycler, byte tags) {
+            for (var i = 0; i < recycler.recycleEvents.Count && i < 8; i++) {
+                if ((tags & (1 << i)) == 0) continue;
+                var unityEvent = recycler.recycleEvents[i].recycleUnityEvent;
+                var masks = WKTEntityEvents.Sort(unityEvent, recycler.transform);
+                for (var j = 0; j < unityEvent.GetPersistentEventCount(); j++) {
+                    if (unityEvent.GetPersistentTarget(j) is UT_ScoreSetter)
+                        masks = masks.WithSkipped(j);
+                }
+                WKTUnityEventFields.InvokeFiltered(unityEvent, null, masks, false);
             }
         }
 
@@ -259,6 +314,8 @@ namespace WhiteKnuckleTogether {
                 WKTHazardCall.DeathwallStart => Object.FindObjectsByType<DEN_DeathwallManager>(FindObjectsInactive.Include, FindObjectsSortMode.None),
                 WKTHazardCall.LightningStrike => Object.FindObjectsByType<ENV_LightningDischarge>(FindObjectsInactive.Include, FindObjectsSortMode.None),
                 WKTHazardCall.OrchidKill => Object.FindObjectsByType<UT_Damage>(FindObjectsInactive.Include, FindObjectsSortMode.None),
+                WKTHazardCall.RecyclerRecycle or WKTHazardCall.RecyclerCash =>
+                    Object.FindObjectsByType<ENV_Recycler>(FindObjectsInactive.Include, FindObjectsSortMode.None),
                 _ => Object.FindObjectsByType<ENV_Flashflower>(FindObjectsInactive.Include, FindObjectsSortMode.None)
             };
             foreach (var candidate in candidates) {

@@ -1,7 +1,9 @@
+using System;
 using System.Collections.Generic;
 using JetBrains.Annotations;
 using UnityEngine;
 using WhiteKnuckleTogether.Networking.LiteNetLib;
+using Object = UnityEngine.Object;
 using SendType = Steamworks.Data.SendType;
 
 namespace WhiteKnuckleTogether {
@@ -10,8 +12,9 @@ namespace WhiteKnuckleTogether {
     /// <list type="bullet">
     /// <item>Any change a client makes (banking roaches, a recycler's payout, spending) goes to the host, which applies it and
     /// tells everyone the new total. The client's own count changes at once and is corrected by that total.</item>
-    /// <item>A client buying a priced perk first asks the host, which holds the roaches back for it if the purse, less what is
-    /// already held back, can pay. Two players buying at once can never both spend the same roaches.</item>
+    /// <item>A client buying something (a priced perk, a page refresh, a vending machine item) first asks the host, which holds
+    /// the roaches back for it if the purse, less what is already held back, can pay. Two players buying at once can never both
+    /// spend the same roaches.</item>
     /// <item>Each player's starting roaches go into the purse when the run starts.</item>
     /// </list>
     /// </summary>
@@ -21,7 +24,9 @@ namespace WhiteKnuckleTogether {
         private readonly Dictionary<(byte Player, byte Request), (int Cost, float Since)> m_holds = new();
         private readonly List<(byte, byte)> m_scratch = new();
         private WKTNetwork m_network = null!;
-        private App_PerkPage? m_pendingPage;
+        private Action<Object, int>? m_pendingBuy;
+        private Object? m_pendingTarget;
+        private int m_pendingArg;
         private byte m_pendingRequest;
         private byte m_nextRequest;
         private int m_prepaid;
@@ -151,13 +156,14 @@ namespace WhiteKnuckleTogether {
 
         #endregion
 
-        #region Perk purchases
+        #region Purchases
 
         /// <summary>
-        /// A perk page is about to buy its selected perk. False holds the purchase back: a client asks the host first, and
-        /// buys once it answers; the host checks the purse less what is held back for others.
+        /// Something is about to be bought for <paramref name="cost"/>. False holds the purchase back: a client asks the host
+        /// first, and calls <paramref name="buy"/> with <paramref name="target"/> and <paramref name="arg"/> once it answers; the
+        /// host checks the purse less what is held back for others.
         /// </summary>
-        public bool BeforePurchase(App_PerkPage page, int cost) {
+        public bool BeforePurchase(int cost, Action<Object, int> buy, Object target, int arg = 0) {
             if (cost <= 0) return true;
             if (m_network.Mode == NetworkMode.Host) {
                 if (CL_GameManager.GetRoaches() - GetHeld() >= cost) return true;
@@ -165,8 +171,10 @@ namespace WhiteKnuckleTogether {
                 return false;
             }
             if (m_prepaid >= cost) return true;
-            if (m_pendingPage != null) return false;
-            m_pendingPage = page;
+            if (m_pendingBuy != null) return false;
+            m_pendingBuy = buy;
+            m_pendingTarget = target;
+            m_pendingArg = arg;
             m_pendingRequest = ++m_nextRequest;
             var writer = m_network.BeginMessage(WKTMessageId.RoachSpendRequest);
             writer.Put(m_pendingRequest);
@@ -190,15 +198,18 @@ namespace WhiteKnuckleTogether {
 
         private void OnSpendAnswer(WKTPlayer sender, NetDataReader reader) {
             if (!sender.IsHost || !reader.TryGetByte(out var request) || !reader.TryGetBool(out var approved) || !reader.TryGetInt(out var cost) ||
-                request != m_pendingRequest || m_pendingPage == null) return;
-            var page = m_pendingPage;
-            m_pendingPage = null;
+                request != m_pendingRequest || m_pendingBuy == null) return;
+            var buy = m_pendingBuy;
+            var target = m_pendingTarget;
+            m_pendingBuy = null;
+            m_pendingTarget = null;
             if (!approved) {
                 WKTToast.Show("Not enough roaches: another player spent them first.");
                 return;
             }
             m_prepaid = cost;
-            page.PurchaseSelected();
+            if (target != null)
+                buy(target, m_pendingArg);
             // A purchase that did not go through after all gives the held-back roaches up.
             if (m_prepaid <= 0) return;
             m_prepaid = 0;

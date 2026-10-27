@@ -38,6 +38,13 @@ namespace WhiteKnuckleTogether {
             WKTEntitySounds.BeforeSound(__instance, WKTEntitySoundKind.Stop, __0, 0f, Vector3.zero);
     }
 
+    /// <summary>The Buddy drone's event lines, played straight from a clip, are sent the same way.</summary>
+    [WKTCriticalPatch(WKTPatchCategory.WorldSync), HarmonyPatch(typeof(DEN_Buddy), nameof(DEN_Buddy.PlaySound))]
+    internal sealed class BuddyLine_Patch {
+        [UsedImplicitly]
+        private static bool Prefix(DEN_Buddy __instance, AudioClip __0) => WKTEntitySounds.BeforeBuddyLine(__instance, __0);
+    }
+
     /// <summary>
     /// Ticks that run on puppets as well as on the simulating machine (<see cref="PuppetTick_Patch.AllowedOnPuppets"/>) play
     /// their sounds, events and pushes on every machine by themselves, so none of them are sent.

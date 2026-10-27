@@ -13,7 +13,6 @@ namespace WhiteKnuckleTogether {
     /// <see cref="WKTWorldSync"/>.
     /// </summary>
     internal sealed class WKTPlayerInventories {
-        private const double c_poll_interval = 0.25;
         /// <summary>How often the items are packed anyway, so changes to their own state (ammo, charge) are sent too.</summary>
         private const double c_refresh_interval = 5;
         private static readonly AccessTools.FieldRef<Inventory, List<Inventory.Pouch>> s_pouches =
@@ -29,7 +28,6 @@ namespace WhiteKnuckleTogether {
         private readonly List<Item> m_walk = new();
         private readonly WKTInventorySnapshot m_sent = new();
         private readonly WKTInventorySnapshot m_scratch = new();
-        private double m_nextPoll;
         private double m_nextRefresh;
         private bool m_sentOnce;
         /// <summary>
@@ -54,7 +52,6 @@ namespace WhiteKnuckleTogether {
             m_sentUsed.Clear();
             m_walk.Clear();
             m_sent.Clear();
-            m_nextPoll = 0;
             m_nextRefresh = 0;
             m_sentOnce = false;
             m_isResyncPending = false;
@@ -77,8 +74,7 @@ namespace WhiteKnuckleTogether {
                     SendAllTo(player);
             }
             DropPending();
-            if (now < m_nextPoll) return;
-            m_nextPoll = now + c_poll_interval;
+            // Checked every frame, so an item dropped right before leaving is gone from the mirror before the host drops it again.
             var inventory = Inventory.instance;
             var local = m_network.LocalPlayer;
             if (inventory == null || local == null) return;

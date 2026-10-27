@@ -17,8 +17,21 @@ namespace WhiteKnuckleTogether {
     }
 
     /// <summary>
-    /// The item a recycler takes is noted, so its payout reaches whoever dropped it. An item a client's amalgamator uses up
-    /// is removed by the host.
+    /// The host's recycler just destroyed what it took and played its <c>recycleEvent</c>, which every client plays too (see
+    /// <see cref="WKTHazardSync"/>). This runs right after it for items and creatures alike.
+    /// </summary>
+    [WKTCriticalPatch(WKTPatchCategory.WorldSync), HarmonyPatch(typeof(ENV_Recycler), "TriggerRecycleEventsFor")]
+    internal sealed class RecyclerRecycle_Patch {
+        [UsedImplicitly]
+        private static void Prefix(ENV_Recycler __instance, ObjectTagger __0) {
+            if (WKTWorldSync.Instance is { IsHost: true } sync)
+                sync.Hazards.OnRecycler(__instance, WKTHazardCall.RecyclerRecycle, WKTHazardSync.RecycleTags(__instance, __0));
+        }
+    }
+
+    /// <summary>
+    /// The item a recycler takes is noted, so its payout reaches whoever dropped it. An item a client's amalgamator uses up,
+    /// or pays to the Bazaar's trading post with, is removed by the host.
     /// </summary>
     [WKTCriticalPatch(WKTPatchCategory.WorldSync), HarmonyPatch(typeof(Item), nameof(Item.Destroy), typeof(bool))]
     internal sealed class RecycledItem_Patch {
@@ -27,7 +40,12 @@ namespace WhiteKnuckleTogether {
             var sync = WKTWorldSync.Instance;
             if (sync == null) return;
             sync.Recyclers.OnItemDestroyed(__instance);
-            if (AmalgamatorCraft_Patch.IsCrafting)
+            if (BazaarPurchase_Patch.IsTrading || BazaarSold_Patch.TakeSold(__instance)) {
+                // One dropped onto the post too recently for the host to know of it is simply never sent.
+                sync.CancelLocalDrop(__instance);
+                sync.OnLocalConsume(__instance);
+            }
+            else if (AmalgamatorCraft_Patch.IsCrafting)
                 sync.OnLocalConsume(__instance);
         }
     }

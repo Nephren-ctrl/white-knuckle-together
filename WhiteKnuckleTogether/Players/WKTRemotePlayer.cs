@@ -507,8 +507,9 @@ namespace WhiteKnuckleTogether {
 
         /// <summary>Host only: gives this body a <see cref="WKTPlayerProxy"/> for enemies to go for, once.</summary>
         public WKTPlayerProxy EnsureProxy(ENT_Player localPlayer) {
-            if (m_proxy == null)
-                m_proxy = WKTPlayerProxy.Create(transform, PlayerId, localPlayer);
+            if (m_proxy != null) return m_proxy;
+            m_proxy = WKTPlayerProxy.Create(transform, PlayerId, localPlayer);
+            ShapeProxy();
             return m_proxy;
         }
 
@@ -538,6 +539,13 @@ namespace WhiteKnuckleTogether {
             m_bodyHalfHeight = height * 0.5f;
             m_handRestOffset.y = center - height * c_hand_rest_drop;
             PlaceHead();
+            ShapeProxy();
+        }
+
+        /// <summary>Gives the proxy enemies go for this body's size and crouch, with the game's controller radius rather than the drawn one.</summary>
+        private void ShapeProxy() {
+            if (m_proxy != null)
+                m_proxy.SetShape(m_radius / BODY_WIDTH_SCALE, m_bodyHalfHeight * 2f, m_bodyCenter, m_eyeHeight);
         }
 
         /// <summary>Puts the head on the eyes for the current crouch, nodding on its neck with the look.</summary>

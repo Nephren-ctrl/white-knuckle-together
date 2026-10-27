@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Steamworks.Data;
+using UnityEngine;
 using WhiteKnuckleTogether.Networking.LiteNetLib;
 
 namespace WhiteKnuckleTogether {
@@ -7,14 +8,19 @@ namespace WhiteKnuckleTogether {
     /// Every other player's perks and their stacks, on every machine. Each player sends their own list when it changes; the
     /// host keeps it and relays it to everyone else. Enemy code asks the player it goes for about a perk (a hopper leaves a
     /// player with Pheromone Glands alone, see <see cref="WKTTargets.HasPerkOf"/>), spawn tables count a perk any player has,
-    /// and the host applies other players' perks that act on the world (see <see cref="WKTWorldPerks"/>). Owned by
+    /// and the host applies other players' perks that act on the world (see <see cref="WKTWorldPerks"/>). Each client also
+    /// sends the host its mass buffs, whatever gave them (perks, items, events), which the shared goo goes by. Owned by
     /// <see cref="WKTWorldSync"/>.
     /// </summary>
     internal sealed class WKTPlayerPerks {
         /// <summary>The most perks a player's list carries.</summary>
         public const int MAX_PERKS = 64;
         private const float c_poll_interval = 1f;
+        /// <summary>The largest mass buff sum a client may report: far beyond what any stack of perks gives.</summary>
+        private const float c_max_mass_buff = 100f;
         private static readonly Dictionary<byte, Dictionary<string, int>> s_byPlayer = new();
+        /// <summary>Host only: each client's mass buffs (speed, resist, slow), as its machine last said.</summary>
+        private static readonly Dictionary<byte, Vector3> s_massBuffs = new();
         private readonly WKTWorldSync m_sync;
         private readonly WKTNetwork m_network;
         /// <summary>The local perks last sent, in the player's order.</summary>
@@ -22,6 +28,7 @@ namespace WhiteKnuckleTogether {
         private readonly List<WKTPerkEntry> m_scratch = new();
         private double m_nextPoll;
         private bool m_sentOnce;
+        private Vector3 m_sentMass;
 
         public WKTPlayerPerks(WKTWorldSync sync, WKTNetwork network) {
             m_sync = sync;
@@ -57,10 +64,18 @@ namespace WhiteKnuckleTogether {
                 perks[entry.Id] = entry.Stack;
         }
 
-        public static void Remove(byte playerId) => s_byPlayer.Remove(playerId);
+        /// <summary>Host only: a client's mass buffs (speed, resist, slow), whatever gave them. False until it said.</summary>
+        public static bool TryGetMassBuffs(byte playerId, out Vector3 buffs) => s_massBuffs.TryGetValue(playerId, out buffs);
+
+        public static void Remove(byte playerId) {
+            s_byPlayer.Remove(playerId);
+            s_massBuffs.Remove(playerId);
+        }
 
         public void Clear() {
             s_byPlayer.Clear();
+            s_massBuffs.Clear();
+            m_sentMass = Vector3.zero;
             m_sent.Clear();
             m_nextPoll = 0;
             m_sentOnce = false;
@@ -72,6 +87,8 @@ namespace WhiteKnuckleTogether {
             m_nextPoll = now + c_poll_interval;
             var player = ENT_Player.playerObject;
             var local = m_network.LocalPlayer;
+            if (player != null && !m_sync.IsHost)
+                SendMassBuffs(player);
             if (player == null || player.perks == null || local == null || (m_sentOnce && Matches(player.perks))) return;
             m_sent.Clear();
             foreach (var perk in player.perks) {
@@ -120,6 +137,32 @@ namespace WhiteKnuckleTogether {
                 Set(playerId, m_scratch);
             m_scratch.Clear();
         }
+
+        /// <summary>
+        /// Client only: sends the host the local player's mass buffs, every poll while any is set (so a new host learns them
+        /// too) and once more when they all went back to none.
+        /// </summary>
+        private void SendMassBuffs(ENT_Player player) {
+            var buffs = player.curBuffs;
+            if (buffs == null) return;
+            var mass = new Vector3(buffs.GetBuff(WKTWorldPerkMath.MASS_SPEED_BUFF), buffs.GetBuff(WKTWorldPerkMath.MASS_RESIST_BUFF),
+                buffs.GetBuff(WKTWorldPerkMath.MASS_SLOW_BUFF));
+            if (mass == Vector3.zero && m_sentMass == Vector3.zero) return;
+            m_sentMass = mass;
+            var writer = m_network.BeginMessage(WKTMessageId.PlayerMassBuffs);
+            writer.Put(mass.x);
+            writer.Put(mass.y);
+            writer.Put(mass.z);
+            m_network.SendToHost(writer, SendType.Reliable);
+        }
+
+        public void OnMassBuffs(WKTPlayer sender, NetDataReader reader) {
+            if (!m_sync.IsHost || sender.IsHost || !reader.TryGetFloat(out var speed) || !reader.TryGetFloat(out var resist) || !reader.TryGetFloat(out var slow) ||
+                !IsMassBuff(speed) || !IsMassBuff(resist) || !IsMassBuff(slow)) return;
+            s_massBuffs[sender.Id] = new Vector3(speed, resist, slow);
+        }
+
+        private static bool IsMassBuff(float value) => value >= -c_max_mass_buff && value <= c_max_mass_buff;
 
         public static void Write(NetDataWriter writer, IReadOnlyList<WKTPerkEntry> entries) {
             writer.Put((byte)entries.Count);

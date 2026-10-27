@@ -8,7 +8,7 @@ namespace WhiteKnuckleTogether {
     /// this machine's copy of what they stand on. Moving things run on every machine, so a rider placed on the local copy
     /// moves with it exactly, where their world position alone would trail behind by the interpolation delay and by however
     /// far the copies are apart. Only while the platform moves (and <see cref="MOVING_HOLD_SECONDS"/> after), and only in
-    /// keyed levels of a synced run; anything else is sent and placed by world position, so a hierarchy that differs between
+    /// keyed levels of a synced run or on the Hadal Diver (<see cref="DIVER_KEY"/>); anything else is sent and placed by world position, so a hierarchy that differs between
     /// machines can never misplace someone standing on still ground.
     /// </summary>
     internal sealed class WKTPlatforms {
@@ -21,6 +21,12 @@ namespace WhiteKnuckleTogether {
         public const float MOVING_HOLD_SECONDS = 1f;
         /// <summary>Slower than this, in metres per second (or the same of turning at a metre out), a platform is still.</summary>
         public const float MOVING_SPEED = 0.05f;
+        /// <summary>
+        /// The level key that stands for the Hadal Diver, which has no level above it once it unparents itself. Each machine
+        /// rides its own diver, each started when its own player got on, so riders are placed on the local diver's segment
+        /// however far its world position is from theirs. The segments are built alike everywhere (content seeding).
+        /// </summary>
+        public const ulong DIVER_KEY = ulong.MaxValue;
         /// <summary>How far up from a platform a level's root is looked for.</summary>
         private const int c_max_search_depth = 24;
         /// <summary>Resolved platforms kept before the cache starts over.</summary>
@@ -82,7 +88,7 @@ namespace WhiteKnuckleTogether {
             var world = pose.Position;
             world.y += worldOffset;
             var delta = platform.TransformPoint(pose.Platform.Local) - world;
-            return IsTrusted(delta) ? pose.Shifted(delta) : pose;
+            return pose.Platform.LevelKey == DIVER_KEY || IsTrusted(delta) ? pose.Shifted(delta) : pose;
         }
 
         /// <summary>Whether a platform moved faster than <see cref="MOVING_SPEED"/> over <paramref name="deltaTime"/>.</summary>
@@ -115,13 +121,18 @@ namespace WhiteKnuckleTogether {
             return null;
         }
 
-        /// <summary>The path down from the keyed level holding <paramref name="platform"/>, if it is shallow enough to send.</summary>
+        /// <summary>
+        /// The path down from the keyed level holding <paramref name="platform"/>, or from the Hadal Diver, if it is shallow
+        /// enough to send.
+        /// </summary>
         private bool TryDescribe(Transform platform, out WKTPlatformRef frame) {
             frame = default;
             var depth = 0;
             var current = platform;
+            var diver = DEN_HadalDiver.instance != null ? DEN_HadalDiver.instance.transform : null;
             for (var step = 0; step < c_max_search_depth && current != null; step++) {
-                if (current.TryGetComponent<M_Level>(out var level) && WKTContentSeeding.TryGetLevelKey(level, out var levelKey)) {
+                var levelKey = DIVER_KEY;
+                if (current == diver || (current.TryGetComponent<M_Level>(out var level) && WKTContentSeeding.TryGetLevelKey(level, out levelKey))) {
                     var pathLow = 0UL;
                     var pathHigh = 0UL;
                     // Collected from the platform up; the path runs from the root down.
@@ -162,8 +173,15 @@ namespace WhiteKnuckleTogether {
         }
 
         private static Transform? Walk(in WKTPlatformRef frame) {
-            if (!WKTContentSeeding.TryGetLevel(frame.LevelKey, out var level)) return null;
-            var current = level!.transform;
+            Transform current;
+            if (frame.LevelKey == DIVER_KEY) {
+                if (DEN_HadalDiver.instance == null) return null;
+                current = DEN_HadalDiver.instance.transform;
+            }
+            else if (WKTContentSeeding.TryGetLevel(frame.LevelKey, out var level))
+                current = level!.transform;
+            else
+                return null;
             for (var i = 0; i < frame.Depth; i++) {
                 var index = frame.GetIndex(i);
                 if (index >= current.childCount) return null;

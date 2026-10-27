@@ -23,6 +23,8 @@ namespace WhiteKnuckleTogether {
         /// reused, so entries of despawned entities are only dropped with the rest at <see cref="Clear"/>.
         /// </summary>
         private readonly Dictionary<int, WKTNetIdentity> m_beside = new();
+        /// <summary>The Buddy drone's line clips found so far, by name.</summary>
+        private readonly Dictionary<string, AudioClip> m_lines = new();
 
         public WKTEntitySounds(WKTWorldSync sync, WKTNetwork network) {
             m_sync = sync;
@@ -90,6 +92,60 @@ namespace WhiteKnuckleTogether {
             m_resolved.Clear();
             m_handlers.Clear();
             m_beside.Clear();
+            m_lines.Clear();
+        }
+
+        /// <summary>
+        /// The Buddy drone is about to say an event line (<c>DEN_Buddy.PlaySound</c>), which it plays straight from a clip. False
+        /// skips a puppet's own; the simulating machine says it and sends the clip's name.
+        /// </summary>
+        public static bool BeforeBuddyLine(DEN_Buddy buddy, AudioClip? clip) {
+            var sounds = WKTWorldSync.Instance?.Sounds;
+            if (sounds == null || clip == null || WKTLocalReplayScope.IsOpen) return true;
+            var identity = buddy.GetComponentInParent<WKTNetIdentity>();
+            if (identity == null || identity.Handle == 0 || identity.Entity == null) return true;
+            if (identity.IsPuppet) return false;
+            var writer = sounds.m_network.BeginMessage(WKTMessageId.BuddyLine);
+            writer.Put(identity.Handle);
+            writer.Put(clip.name);
+            if (sounds.m_sync.IsHost)
+                sounds.SendNear(writer, identity.transform.position, null);
+            else
+                sounds.m_network.SendToHost(writer, SendType.Reliable);
+            return true;
+        }
+
+        /// <summary>A Buddy drone's line from the machine simulating it, passed on like <see cref="OnSound"/> and said by puppets.</summary>
+        public void OnBuddyLine(WKTPlayer sender, NetDataReader reader) {
+            if (!reader.TryGetUShort(out var handle) || !reader.TryGetString(out var clipName) || !m_sync.TryGetIdentity(handle, out var identity) ||
+                identity!.Entity == null) return;
+            if (m_sync.IsHost) {
+                if (sender.IsHost || identity.Owner != sender.Id) return;
+                var writer = m_network.BeginMessage(WKTMessageId.BuddyLine);
+                writer.Put(handle);
+                writer.Put(clipName);
+                SendNear(writer, identity.transform.position, sender);
+            }
+            else if (!sender.IsHost) return;
+            if (!identity.IsPuppet || identity.GetComponentInChildren<DEN_Buddy>() is not { } buddy || !TryFindLine(clipName, out var clip)) return;
+            WKTLocalReplayScope.Enter();
+            try {
+                buddy.PlaySound(clip);
+            }
+            finally {
+                WKTLocalReplayScope.Exit();
+            }
+        }
+
+        /// <summary>A loaded clip by name, searched for once per name: lines come a minute or more apart.</summary>
+        private bool TryFindLine(string clipName, out AudioClip clip) {
+            if (m_lines.TryGetValue(clipName, out clip) && clip != null) return true;
+            foreach (var loaded in Resources.FindObjectsOfTypeAll<AudioClip>()) {
+                if (loaded.name != clipName) continue;
+                m_lines[clipName] = clip = loaded;
+                return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -127,30 +183,29 @@ namespace WhiteKnuckleTogether {
         private void Send(UT_AudioClipHandler handler, WKTNetIdentity identity, byte index, WKTEntitySoundKind kind, string sound, float volume, Vector3 position) {
             if (!WKTEntitySoundRules.TryFind(handler.groups, sound, out var group, out var set)) return;
             var wirePosition = kind == WKTEntitySoundKind.PlayAt ? WKTWorldOffset.ToWire(position, WKTWorldOffset.Get()) : Vector3.zero;
-            var entitySound = new WKTEntitySound(identity.Handle, index, kind, group, set, volume, wirePosition);
+            var writer = m_network.BeginMessage(WKTMessageId.EntitySound);
+            new WKTEntitySound(identity.Handle, index, kind, group, set, volume, wirePosition).Write(writer);
             if (m_sync.IsHost)
-                SendNear(entitySound, identity.transform.position, null);
-            else {
-                var writer = m_network.BeginMessage(WKTMessageId.EntitySound);
-                entitySound.Write(writer);
+                SendNear(writer, identity.transform.position, null);
+            else
                 m_network.SendToHost(writer, SendType.Reliable);
-            }
         }
 
-        /// <summary>Host only: sends a sound to every remote player near where it played, except <paramref name="except"/>.</summary>
         private void SendNear(in WKTEntitySound sound, Vector3 position, WKTPlayer? except) {
+            var writer = m_network.BeginMessage(WKTMessageId.EntitySound);
+            sound.Write(writer);
+            SendNear(writer, position, except);
+        }
+
+        /// <summary>Host only: sends a sound's message to every remote player near where it played, except <paramref name="except"/>.</summary>
+        private void SendNear(NetDataWriter writer, Vector3 position, WKTPlayer? except) {
             const float range_squared = WKTEntityStateSender.RELEVANCE_DISTANCE * WKTEntityStateSender.RELEVANCE_DISTANCE;
-            NetDataWriter? writer = null;
             for (var i = 0; i < WKTPlayerPositions.RemoteCount; i++) {
                 var id = WKTPlayerPositions.GetRemoteId(i);
                 if (except != null && except.Id == id) continue;
                 if ((WKTPlayerPositions.GetRemotePosition(i) - position).sqrMagnitude > range_squared) continue;
-                if (!m_network.TryGetPlayer(id, out var player) || player == null) continue;
-                if (writer == null) {
-                    writer = m_network.BeginMessage(WKTMessageId.EntitySound);
-                    sound.Write(writer);
-                }
-                m_network.SendToPlayer(player, writer, SendType.Reliable);
+                if (m_network.TryGetPlayer(id, out var player) && player != null)
+                    m_network.SendToPlayer(player, writer, SendType.Reliable);
             }
         }
 

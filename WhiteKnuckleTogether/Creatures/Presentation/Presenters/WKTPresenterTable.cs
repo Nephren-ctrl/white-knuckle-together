@@ -19,6 +19,8 @@ namespace WhiteKnuckleTogether {
             (typeof(DEN_BasicDenizen_Flier), entity => new WKTFlierPresenter(entity)),
             (typeof(DEN_Drone), entity => new WKTFlierPresenter(entity)),
             (typeof(DEN_Bloodbug), entity => new WKTFlierPresenter(entity)),
+            (typeof(DEN_SlugGrub), entity => new WKTSlugGrubPresenter(entity)),
+            (typeof(DEN_GantryTurret), entity => new WKTGantryTurretPresenter(entity)),
             // Any other basic denizen aiming with turret segments, such as the Ravelin.
             (typeof(DEN_BasicDenizen), entity => new WKTTurretSegmentsPresenter(entity))
         };

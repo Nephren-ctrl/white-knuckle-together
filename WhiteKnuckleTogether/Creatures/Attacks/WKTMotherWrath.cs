@@ -1,5 +1,7 @@
+using System.Collections;
 using System.Collections.Generic;
 using Steamworks.Data;
+using UnityEngine;
 using WhiteKnuckleTogether.Networking.LiteNetLib;
 
 namespace WhiteKnuckleTogether {
@@ -11,7 +13,9 @@ namespace WhiteKnuckleTogether {
     /// <item>The player whose act enraged her (<see cref="WKTDamageCause"/>, else whoever's machine called it) is noted when
     /// her crush starts. A client's own call is sent to the host instead of enraging its puppet.</item>
     /// <item>The crush kills that player, through a player effect when they are remote. Puppets never kill anyone.</item>
-    /// <item>Her lines during it are shown to that player.</item>
+    /// <item>Her lines during it are shown to that player, and her glare (her <c>angerEvent</c>'s forced camera look-at) pulls
+    /// only their camera toward her, until the crush has landed. The rest of that event (the Hot Zone generator switching
+    /// off) is the world's, run on every machine (see <see cref="WKTDoorSync"/>).</item>
     /// </list>
     /// Owned by <see cref="WKTWorldSync"/>.
     /// </summary>
@@ -19,6 +23,8 @@ namespace WhiteKnuckleTogether {
         public const byte NOBODY = WKTDamageCause.NOBODY;
         /// <summary>The longest line Mother says, in characters.</summary>
         public const int MAX_LINE_LENGTH = 512;
+        /// <summary>Her crush lands 6 seconds after her anger, then plays out; the glare ends after it, as the culprit died.</summary>
+        private const float c_glare_seconds = 10f;
         private readonly WKTWorldSync m_sync;
         private readonly WKTNetwork m_network;
         /// <summary>Host only: whom each enraged Mother crushes, by her instance id.</summary>
@@ -53,9 +59,38 @@ namespace WhiteKnuckleTogether {
                 return false;
             }
             // The same checks as the game's: only the call that starts her crush picks whom it is for.
-            if (crush && !mother.angry && !mother.focused && mother.canAnger)
-                m_culprits[mother.GetInstanceID()] = culprit;
+            if (!crush || mother.angry || mother.focused || !mother.canAnger) return true;
+            m_culprits[mother.GetInstanceID()] = culprit;
+            if (culprit == LocalId)
+                Glare(mother);
+            else if (m_network.TryGetPlayer(culprit, out var player) && player != null) {
+                var writer = m_network.BeginMessage(WKTMessageId.MotherGlare);
+                writer.Put(identity.Handle);
+                m_network.SendToPlayer(player, writer, SendType.Reliable);
+            }
             return true;
+        }
+
+        /// <summary>Client only: the host's Mother started crushing the local player.</summary>
+        public void OnGlare(WKTPlayer sender, NetDataReader reader) {
+            if (m_sync.IsHost || !sender.IsHost || !reader.TryGetUShort(out var handle) || !m_sync.TryGetIdentity(handle, out var identity) ||
+                identity!.Entity is not DEN_Mother mother) return;
+            Glare(mother);
+        }
+
+        /// <summary>Turns on the forced camera look-at Mother's <c>angerEvent</c> turns on, here only, for the length of her crush.</summary>
+        private static void Glare(DEN_Mother mother) {
+            var anger = mother.angerEvent;
+            for (var i = 0; i < anger.GetPersistentEventCount(); i++) {
+                if (anger.GetPersistentTarget(i) is not UT_ForceCameraLookAt lookAt || lookAt == null || !lookAt.isActiveAndEnabled) continue;
+                lookAt.SetActive(true);
+                lookAt.StartCoroutine(EndGlare(lookAt));
+            }
+        }
+
+        private static IEnumerator EndGlare(UT_ForceCameraLookAt lookAt) {
+            yield return new WaitForSeconds(c_glare_seconds);
+            lookAt.SetActive(false);
         }
 
         /// <summary>Host only: a client enraged its copy of Mother.</summary>
