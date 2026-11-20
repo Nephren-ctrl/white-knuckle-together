@@ -64,6 +64,12 @@ namespace WhiteKnuckleTogether {
             return t >= 0.5f ? to : from;
         }
 
+        /// <summary>The size <see cref="Write"/> takes at <see cref="MAX_DEPTH"/>.</summary>
+        public const int MAX_SIZE = sizeof(ulong) + sizeof(byte) + sizeof(ushort) * MAX_DEPTH + sizeof(uint) + WKTWire.VECTOR3_SIZE;
+
+        /// <summary>The size <see cref="Write"/> takes.</summary>
+        public int GetSize() => MAX_SIZE - sizeof(ushort) * (MAX_DEPTH - Depth);
+
         public void Write(NetDataWriter writer) {
             writer.Put(LevelKey);
             writer.Put(Depth);

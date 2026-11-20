@@ -56,6 +56,10 @@ namespace WhiteKnuckleTogether {
         private readonly float[] m_animatorValues = new float[WKTEntityState.MAX_ANIMATOR_VALUES];
         private readonly int[] m_animatorStates = new int[WKTEntityState.MAX_ANIMATOR_LAYERS];
         private readonly List<ushort> m_handleScratch = new();
+        /// <summary>Client only: puppets placed on this machine's copy of what carries them, at the end of the frame.</summary>
+        private readonly List<(Transform Puppet, Transform Platform, Vector3 Local)> m_riders = new();
+        private readonly WKTPlatforms m_platforms = new();
+        private WKTPlatformZones m_platformZones = null!;
         /// <summary>Client only: the host's items the local player took and the host has yet to give them.</summary>
         private readonly WKTItemClaims<Item> m_claims = new();
         private readonly List<PendingDrop> m_pendingDrops = new();
@@ -163,7 +167,9 @@ namespace WhiteKnuckleTogether {
             Hazards = new WKTHazardSync(this, m_network);
             Ladder = new WKTLadderSecret(this, m_network);
             EventSpawns = new WKTEventSpawns(this, m_network);
+            m_platformZones = new WKTPlatformZones(m_platforms);
             m_onLevelKeyed = (level, levelKey) => {
+                m_platformZones.IndexLevel(level);
                 Pitons.OnLevelKeyed(levelKey);
                 ReturnRebars.OnLevelKeyed(levelKey);
                 PlacedRopes.OnLevelKeyed(levelKey);
@@ -398,6 +404,7 @@ namespace WhiteKnuckleTogether {
         private void LateUpdate() {
             if (m_network.IsMultiplayerRun)
                 Forces.Flush();
+            PlaceRiders();
             // Decided here rather than when registered: deactivating an object from inside its own activation is not allowed,
             // and the game often moves a new object into the bag or a hand in the same frame it creates it.
             foreach (var identity in m_hideQueue) {
@@ -1266,16 +1273,19 @@ namespace WhiteKnuckleTogether {
         private void SendStates(ushort sequence, double now) {
             var offset = WKTWorldOffset.Get();
             m_sender.BeginTick();
+            m_platformZones.BeginTick(Time.unscaledTime);
             foreach (var identity in m_byHandle.Values) {
                 if (identity == null) continue;
                 // Polled too, since a held item changes layer and a bagged one moves without being disabled.
                 ReportActivation(identity);
                 if (!identity.ReportedActive || !identity.gameObject.activeInHierarchy) continue;
                 var objectTransform = identity.transform;
-                var pose = new WKTEntityPose(WKTWorldOffset.ToWire(objectTransform.position, offset), objectTransform.rotation);
+                var owner = identity.Owner;
+                // shortcut: a client-simulated object is relayed without what carries it, so it trails a mover; send its platform from the client too if that shows up.
+                var pose = new WKTEntityPose(WKTWorldOffset.ToWire(objectTransform.position, offset), objectTransform.rotation,
+                    owner == WKTEntityAuthority.HOST ? m_platformZones.Find(identity) : default);
                 var entity = identity.Entity;
                 var aiBits = WKTEnemyHits.GetAiBits(entity);
-                var owner = identity.Owner;
                 // A client simulates this one: everyone else gets its newest state as it sent it, not the host's puppet of it.
                 if (owner != WKTEntityAuthority.HOST && Authority.TryGetLatest(identity.Handle, out var latest)) {
                     if (latest.HasPose)
@@ -1410,10 +1420,27 @@ namespace WhiteKnuckleTogether {
                 // point in the dive (see WKTDiverExit): the host's pose of it is on the host's diver.
                 if (!identity!.IsPuppet || identity.SelfDriven || identity.NestedIn != null || !identity.gameObject.activeInHierarchy ||
                     WKTDiverExit.IsPartOfDiver(identity) || !pair.Value.TrySample(now, out var pose)) continue;
-                identity.transform.SetPositionAndRotation(WKTWorldOffset.FromWire(pose.Position, offset), pose.Rotation);
+                var world = WKTWorldOffset.FromWire(pose.Position, offset);
+                identity.transform.SetPositionAndRotation(world, pose.Rotation);
+                // On what carries it, as this machine has it: placed once movers have moved this frame.
+                if (pose.Platform.IsSet && m_platforms.TryResolve(pose.Platform, out var platform) &&
+                    WKTPlatforms.IsTrusted(platform.TransformPoint(pose.Platform.Local) - world))
+                    m_riders.Add((identity.transform, platform, pose.Platform.Local));
             }
             foreach (var handle in m_handleScratch)
                 m_buffers.Remove(handle);
+        }
+
+        /// <summary>
+        /// Moves riding puppets onto this machine's copy of what carries them, after the movers' own updates and animation.
+        /// shortcut: only their position follows the mover, their rotation is the sent one; carry it too if turning movers show it.
+        /// </summary>
+        private void PlaceRiders() {
+            foreach (var (puppet, platform, local) in m_riders) {
+                if (puppet != null && platform != null)
+                    puppet.position = platform.TransformPoint(local);
+            }
+            m_riders.Clear();
         }
 
         #endregion

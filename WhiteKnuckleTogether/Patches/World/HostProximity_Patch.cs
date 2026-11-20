@@ -67,6 +67,24 @@ namespace WhiteKnuckleTogether {
             WKTCallRewriter.RedirectCalls(instructions, PlayerDistance, s_nearestDistance, out _);
     }
 
+    /// <summary>
+    /// A roach only runs its AI within 30 m of the local camera (<c>DEN_Roach.Update</c>), so the host's roaches near a client
+    /// alone hung where they spawned. It measures to the nearest player instead.
+    /// </summary>
+    [WKTCriticalPatch(WKTPatchCategory.HostSimulation), HarmonyPatch(typeof(DEN_Roach), nameof(DEN_Roach.Update))]
+    internal sealed class RoachNearestPlayer_Patch {
+        public static readonly MethodInfo Distance = AccessTools.Method(typeof(Vector3), nameof(Vector3.Distance), new[] { typeof(Vector3), typeof(Vector3) });
+        private static readonly MethodInfo s_nearest = AccessTools.Method(typeof(WKTPlayerPositions), nameof(WKTPlayerPositions.DistanceToNearest));
+
+        [UsedImplicitly]
+        private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions) {
+            var result = WKTCallRewriter.RedirectCalls(instructions, Distance, s_nearest, out var count);
+            if (count != 1)
+                throw new InvalidOperationException($"Expected one distance check in DEN_Roach.Update, found {count}.");
+            return result;
+        }
+    }
+
     /// <summary>A wave zone is occupied while any player is inside it.</summary>
     [WKTCriticalPatch(WKTPatchCategory.HostSimulation), HarmonyPatch(typeof(ENV_DenizenWaveZone), nameof(ENV_DenizenWaveZone.IsPlayerInWaveZone))]
     internal sealed class WaveZoneOccupied_Patch {

@@ -9,38 +9,40 @@ namespace WhiteKnuckleTogether {
     /// <see cref="WKTNetworkConsts.SEND_RATE"/>, stamped with the sender's send tick like player states.
     /// </summary>
     public struct WKTEntityState {
-        public const byte FLAG_POSE = 1 << 0;
-        public const byte FLAG_HEALTH = 1 << 1;
-        public const byte FLAG_ANIMATOR = 1 << 2;
-        public const byte FLAG_DEAD = 1 << 3;
+        public const ushort FLAG_POSE = 1 << 0;
+        public const ushort FLAG_HEALTH = 1 << 1;
+        public const ushort FLAG_ANIMATOR = 1 << 2;
+        public const ushort FLAG_DEAD = 1 << 3;
         /// <summary>The state each animator layer is in, which also carries what one-shot triggers started.</summary>
-        public const byte FLAG_ANIMATOR_STATES = 1 << 4;
+        public const ushort FLAG_ANIMATOR_STATES = 1 << 4;
         /// <summary>
         /// Bits describing what the enemy is doing, whose meaning each enemy type defines from its own fields, so clients can run
         /// its attacks against their own player.
         /// </summary>
-        public const byte FLAG_AI = 1 << 5;
+        public const ushort FLAG_AI = 1 << 5;
         /// <summary>Linear and angular velocity, so a machine taking the object over carries on its motion.</summary>
-        public const byte FLAG_VELOCITY = 1 << 6;
+        public const ushort FLAG_VELOCITY = 1 << 6;
         /// <summary>The player the enemy is engaged with, or <see cref="WKTEntityAuthority.NOBODY"/>.</summary>
-        public const byte FLAG_ENGAGED = 1 << 7;
+        public const ushort FLAG_ENGAGED = 1 << 7;
+        /// <summary>The pose's <see cref="WKTEntityPose.Platform"/>. Only with <see cref="FLAG_POSE"/>.</summary>
+        public const ushort FLAG_PLATFORM = 1 << 8;
         public const int MAX_ANIMATOR_VALUES = 16;
         public const int MAX_ANIMATOR_LAYERS = 4;
         /// <summary>Sequence and entry count.</summary>
         public const int HEADER_SIZE = sizeof(ushort) + sizeof(byte);
         /// <summary>The largest an entry can be.</summary>
-        public const int MAX_ENTRY_SIZE = sizeof(ushort) + sizeof(byte) + WKTWire.VECTOR3_SIZE + WKTWire.QUATERNION_SIZE +
+        public const int MAX_ENTRY_SIZE = sizeof(ushort) + sizeof(ushort) + WKTWire.VECTOR3_SIZE + WKTWire.QUATERNION_SIZE + WKTPlatformRef.MAX_SIZE +
             sizeof(float) + sizeof(byte) + sizeof(float) * MAX_ANIMATOR_VALUES + sizeof(byte) + sizeof(int) * MAX_ANIMATOR_LAYERS + sizeof(byte) +
             WKTWire.VECTOR3_SIZE * 2 + sizeof(byte);
         /// <summary>Stays under the usual path MTU, so a batch is never split into fragments that could be lost separately.</summary>
         public const int MAX_PACKET_SIZE = 1100;
-        private const byte c_known_flags = FLAG_POSE | FLAG_HEALTH | FLAG_ANIMATOR | FLAG_DEAD | FLAG_ANIMATOR_STATES | FLAG_AI |
-            FLAG_VELOCITY | FLAG_ENGAGED;
+        private const ushort c_known_flags = FLAG_POSE | FLAG_HEALTH | FLAG_ANIMATOR | FLAG_DEAD | FLAG_ANIMATOR_STATES | FLAG_AI |
+            FLAG_VELOCITY | FLAG_ENGAGED | FLAG_PLATFORM;
         /// <summary>The most health accepted. Rejects garbage without limiting any real enemy.</summary>
         private const float c_max_health = 1e7f;
 
         public ushort Handle;
-        public byte Flags;
+        public ushort Flags;
         public WKTEntityPose Pose;
         public float Health;
         /// <summary>How many of the animator values are used. Only meaningful with <see cref="FLAG_ANIMATOR"/>.</summary>
@@ -55,7 +57,7 @@ namespace WhiteKnuckleTogether {
         /// <summary>Only meaningful with <see cref="FLAG_ENGAGED"/>.</summary>
         public byte Engaged;
 
-        public readonly bool Has(byte flag) => (Flags & flag) != 0;
+        public readonly bool Has(ushort flag) => (Flags & flag) != 0;
 
         /// <summary>Starts a batch. Returns the writer position of the entry count, for <see cref="EndBatch"/>.</summary>
         public static int BeginBatch(NetDataWriter writer, ushort sequence) {
@@ -70,9 +72,11 @@ namespace WhiteKnuckleTogether {
 
         /// <summary>The size <see cref="Write"/> will take, so batches can be kept under <see cref="MAX_PACKET_SIZE"/>.</summary>
         public int GetSize() {
-            var size = sizeof(ushort) + sizeof(byte);
+            var size = sizeof(ushort) + sizeof(ushort);
             if (Has(FLAG_POSE))
                 size += WKTWire.VECTOR3_SIZE + WKTWire.QUATERNION_SIZE;
+            if (Has(FLAG_PLATFORM))
+                size += Pose.Platform.GetSize();
             if (Has(FLAG_HEALTH))
                 size += sizeof(float);
             if (Has(FLAG_ANIMATOR))
@@ -99,6 +103,8 @@ namespace WhiteKnuckleTogether {
                 WKTWire.Put(writer, Pose.Position);
                 WKTWire.Put(writer, Pose.Rotation);
             }
+            if (Has(FLAG_PLATFORM))
+                Pose.Platform.Write(writer);
             if (Has(FLAG_HEALTH))
                 writer.Put(Health);
             if (Has(FLAG_ANIMATOR)) {
@@ -132,18 +138,21 @@ namespace WhiteKnuckleTogether {
         /// Reads one entry, its animator values into <paramref name="animatorValues"/> (at least
         /// <see cref="MAX_ANIMATOR_VALUES"/> long) and its layer states into <paramref name="animatorStates"/> (at least
         /// <see cref="MAX_ANIMATOR_LAYERS"/> long when present). Fails on truncation, handle 0, unknown flags, bad
-        /// poses, health outside [-1e7, 1e7], too many or non-finite animator values, too many layers and speeds over
-        /// <see cref="WKTWire.MAX_SPEED"/>.
+        /// poses, a platform without a pose, health outside [-1e7, 1e7], too many or non-finite animator values, too many layers
+        /// and speeds over <see cref="WKTWire.MAX_SPEED"/>.
         /// </summary>
         public static bool TryRead(NetDataReader reader, out WKTEntityState state, Span<float> animatorValues, Span<int> animatorStates = default) {
             state = default;
             if (!reader.TryGetUShort(out var handle) || handle == 0) return false;
-            if (!reader.TryGetByte(out var flags) || (flags & ~c_known_flags) != 0) return false;
+            if (!reader.TryGetUShort(out var flags) || (flags & ~c_known_flags) != 0) return false;
             state.Handle = handle;
             state.Flags = flags;
+            if (state.Has(FLAG_PLATFORM) && !state.Has(FLAG_POSE)) return false;
             if (state.Has(FLAG_POSE)) {
                 if (!WKTWire.TryGetPosition(reader, out var position) || !WKTWire.TryGetRotation(reader, out var rotation)) return false;
-                state.Pose = new WKTEntityPose(position, rotation);
+                var platform = default(WKTPlatformRef);
+                if (state.Has(FLAG_PLATFORM) && !WKTPlatformRef.TryRead(reader, out platform)) return false;
+                state.Pose = new WKTEntityPose(position, rotation, platform);
             }
             if (state.Has(FLAG_HEALTH)) {
                 if (!reader.TryGetFloat(out var health) || !(health >= -c_max_health && health <= c_max_health)) return false;

@@ -217,7 +217,7 @@ namespace WhiteKnuckleTogether {
             level.GetComponentsInChildren(true, m_behaviourScratch);
             WKTComputerLevers.Collect(level, m_computerLevers);
             foreach (var behaviour in m_behaviourScratch) {
-                if (behaviour == null || (Array.IndexOf(s_inputTypes, behaviour.GetType()) < 0 && !IsDoorDamage(behaviour) && !IsLevelPickup(behaviour) &&
+                if (behaviour == null || (Array.IndexOf(s_inputTypes, behaviour.GetType()) < 0 && !IsDoorDamage(behaviour) && !IsDoorGrab(behaviour) && !IsLevelPickup(behaviour) &&
                                            !IsLoadingController(behaviour) && behaviour is not DEN_Mother)) continue;
                 // A creature's own buttons run on the machine simulating it (see WKTEntityEvents). A computer's lever is each
                 // player's own, so its events run where it was pulled, as in singleplayer (see WKTComputerLevers).
@@ -256,7 +256,7 @@ namespace WhiteKnuckleTogether {
             var diverRide = playerZone && IsDiverRide(input);
             for (var index = 0; index < s_inputEvents.Count && index <= byte.MaxValue; index++) {
                 var (unityEvent, name) = s_inputEvents[index];
-                if (unityEvent == null || (input is Item_Object && name != nameof(Item_Object.pickupEvent)) ||
+                if (unityEvent == null || (input is Item_Object && name != nameof(Item_Object.pickupEvent)) || (input is CL_Handhold && name != nameof(CL_Handhold.activeEvent)) ||
                     (input is UT_EventController && !WKTGatherCheck.IsLoading(unityEvent)) || (input is DEN_Mother && name != nameof(DEN_Mother.angerEvent))) continue;
                 var count = unityEvent.GetPersistentEventCount();
                 var masks = default(WKTListenerMasks);
@@ -278,7 +278,8 @@ namespace WhiteKnuckleTogether {
                     }
                     else if (input is UT_TriggerZone && LooksLikeDoor(target))
                         WarnUnknownDoor(level, target, method);
-                    masks = masks.With(i, diverRide || WKTWorldWiring.IsLocalTarget(target.GetType()) || IsOnPlayer(target) || (playerZone && IsComputerKeyboard(target)) ||
+                    masks = masks.With(i, diverRide || WKTWorldWiring.IsLocalTarget(target.GetType()) || IsOnPlayer(target) ||
+                        (playerZone && (IsComputerKeyboard(target) || IsScreenSound(target))) ||
                         (input is Item_Object && IsUnder(target, input.transform)));
                 }
                 var buildsBranch = WKTGatherCheck.CallsGenerator(unityEvent);
@@ -395,6 +396,12 @@ namespace WhiteKnuckleTogether {
         private static bool IsDoorDamage(MonoBehaviour behaviour) =>
             behaviour is UT_Damage damage && (TargetsDoor(damage.DamageEvent, true) || TargetsDoor(damage.KillEvent, false));
 
+        /// <summary>
+        /// A handhold that moves a door when grabbed, such as a drop ladder swinging down. Any player's grab lands on their own
+        /// machine, so it goes through the host like a button's.
+        /// </summary>
+        private static bool IsDoorGrab(MonoBehaviour behaviour) => behaviour is CL_Handhold handhold && TargetsDoor(handhold.activeEvent, false);
+
         private static bool TargetsDoor(UnityEventBase? unityEvent, bool toggles) {
             if (unityEvent == null) return false;
             var count = unityEvent.GetPersistentEventCount();
@@ -446,6 +453,13 @@ namespace WhiteKnuckleTogether {
 
         private static bool IsOnPlayer(UnityEngine.Object target) =>
             target is Component component && component != null && component.GetComponentInParent<ENT_Player>(true) != null;
+
+        /// <summary>
+        /// A sound heard the same from anywhere (spatial blend 0), such as the wind a Silos air exchange zone plays while a player
+        /// is inside it: a trigger playing one plays it for whoever is in the trigger.
+        /// </summary>
+        private static bool IsScreenSound(UnityEngine.Object target) =>
+            target is Component component && component != null && component.TryGetComponent<AudioSource>(out var source) && source.spatialBlend <= 0f;
 
         /// <summary>
         /// A computer's keyboard, which a trigger switches off as a player walks away from it (the Silos safe room's exit and its
@@ -1023,10 +1037,11 @@ namespace WhiteKnuckleTogether {
                 var zone = gate.Zone;
                 var zoneMin = zone - gate.ZoneExtents;
                 var zoneMax = zone + gate.ZoneExtents;
-                var room = GetGateRoom(gate);
+                var levelRoom = WKTLevelAccess.GetLevelRoom(gate.Level);
+                var room = GetGateRoom(gate, levelRoom);
                 var doorway = gate.Doorway;
                 m_groupGates.Add(new WKTGroupGate(gate.Key, zoneMin - capsule.Below, zoneMax + capsule.Above, doorway - gate.DoorwayExtents,
-                    doorway + gate.DoorwayExtents, room, gate.IsOpen));
+                    doorway + gate.DoorwayExtents, room, gate.IsOpen, levelRoom));
             }
             m_grouping.Evaluate(m_groupGates, m_groupPlayers, deltaTime, m_open, m_passed);
             for (var i = 0; i < m_gates.Count; i++) {
@@ -1050,23 +1065,20 @@ namespace WhiteKnuckleTogether {
         }
 
         /// <summary>The route room a gate leads into: its zone's, looked up just above the zone's bottom, capped by its level's.</summary>
-        private static int GetGateRoom(in Gate gate) {
+        private static int GetGateRoom(in Gate gate, int levelRoom) {
             var zone = gate.Zone;
             var probe = new Vector3(zone.x, zone.y - gate.ZoneExtents.y + c_room_probe_height, zone.z);
-            return WKTDoorGrouping.GetGateRoom(WKTLevelAccess.GetRouteRoom(probe), WKTLevelAccess.GetLevelRoom(gate.Level));
+            return WKTDoorGrouping.GetGateRoom(WKTLevelAccess.GetRouteRoom(probe), levelRoom);
         }
 
         /// <summary>Every gate the grouping moves, with the rooms it decided by and who it waits for, so play tests show what it did.</summary>
         private void LogGateChange(ulong key, Component door, WKTGateState state, int room) {
-            var waiting = string.Empty;
-            if (state == WKTGateState.Open) {
-                foreach (var player in m_groupPlayers) {
-                    if (player.Alive && !m_grouping.IsThrough(key, player.Id))
-                        waiting += $" {player.Id} (room {player.Room}, y {player.Position.y:F1})";
-                }
+            var players = string.Empty;
+            foreach (var player in m_groupPlayers) {
+                if (player.Alive)
+                    players += $" {player.Id} ({(m_grouping.IsThrough(key, player.Id) ? "through" : "not through")}, room {player.Room}, at {player.Position:F1})";
             }
-            var suffix = waiting.Length > 0 ? $" Not through:{waiting}." : string.Empty;
-            WKT.Instance.Logger.LogInfo($"Gate {door.name} (room {room}): {state}.{suffix}");
+            WKT.Instance.Logger.LogInfo($"Gate {door.name} (room {room}): {state}. Living:{(players.Length > 0 ? players : " none")}.");
         }
 
         /// <summary>
@@ -1080,15 +1092,23 @@ namespace WhiteKnuckleTogether {
             var localPlayer = m_network.LocalPlayer;
             if (local == null || localPlayer == null) return false;
             capsule = CapsuleReach.Of(local.cCon);
-            AddPlayer(localPlayer.Id, local.transform.position, local.dead);
-            for (var i = 0; i < WKTPlayerPositions.RemoteCount; i++)
-                AddPlayer(WKTPlayerPositions.GetRemoteId(i), WKTPlayerPositions.GetRemotePosition(i), WKTPlayerPositions.IsRemoteDead(i));
+            AddPlayer(localPlayer.Id, local.transform.position, local.dead, WKTPlayerRooms.GetLocalRoom());
+            for (var i = 0; i < WKTPlayerPositions.RemoteCount; i++) {
+                var id = WKTPlayerPositions.GetRemoteId(i);
+                AddPlayer(id, WKTPlayerPositions.GetRemotePosition(i), WKTPlayerPositions.IsRemoteDead(i), WKTPlayerRooms.Get(id));
+            }
             return true;
         }
 
-        private void AddPlayer(byte id, Vector3 position, bool dead) {
+        /// <summary>
+        /// A player's route room is the level they say they are in (each machine's own current level), so a route that runs
+        /// flat, where every level starts at the same height, still tells levels apart. Their height decides when that is unknown.
+        /// </summary>
+        private void AddPlayer(byte id, Vector3 position, bool dead, ulong reportedLevel) {
             var alive = !dead && !WKTPlayerDeaths.IsDead(id);
-            var room = WKTDoorGrouping.RememberRoom(WKTLevelAccess.GetRouteRoom(position), ref m_lastRooms[id]);
+            var reported = reportedLevel != WKTPlayerRooms.UNKNOWN && reportedLevel != WKTPlayerRooms.CHAMBER &&
+                WKTContentSeeding.TryGetLevel(reportedLevel, out var level) ? WKTLevelAccess.GetLevelRoom(level) : -1;
+            var room = WKTDoorGrouping.RememberRoom(reported >= 0 ? reported : WKTLevelAccess.GetRouteRoom(position), ref m_lastRooms[id]);
             m_groupPlayers.Add(new WKTGroupPlayer(id, position, room, alive));
         }
 

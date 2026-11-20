@@ -147,6 +147,7 @@ namespace WhiteKnuckleTogether {
             Add(player, nameof(ENT_Player.SplatterScreenBlood), new[] { typeof(int) }, nameof(WKTTargets.SplatterScreenBlood));
             Add(player, nameof(ENT_Player.SplatterScreenBlood), new[] { typeof(int), typeof(Color) }, nameof(WKTTargets.SplatterScreenBloodColored));
             Add(player, nameof(ENT_Player.SplatterScreenBlood), new[] { typeof(int), typeof(List<string>) }, nameof(WKTTargets.SplatterScreenBloodTagged));
+            Add(typeof(CL_CameraControl), nameof(CL_CameraControl.CanSeeTarget), new[] { typeof(Transform), typeof(float) }, nameof(WKTTargets.CanSeeTargetOf));
             return replacements;
         }
     }

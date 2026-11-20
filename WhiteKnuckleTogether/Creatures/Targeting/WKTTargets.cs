@@ -185,6 +185,18 @@ namespace WhiteKnuckleTogether {
 
         public static Camera CamOf(ENT_Player player, Component? self) => TryGetRemote(self, out var proxy) ? proxy!.Head : player.cam;
 
+        /// <summary>
+        /// Replaces <c>player.camRoot.CanSeeTarget(target, maxAngle)</c>, such as a Vent Thing's hand backing off when looked at:
+        /// whether the player an enemy goes for looks within <paramref name="maxAngle"/> of <paramref name="target"/>.
+        /// </summary>
+        public static bool CanSeeTargetOf(CL_CameraControl camera, Transform target, float maxAngle, Component? self) {
+            if (!TryGetRemote(self, out var proxy) || camera != ENT_Player.playerObject.camRoot) return camera.CanSeeTarget(target, maxAngle);
+            var head = proxy!.Head.transform;
+            // The stand-in's head only turns with the body; the remote player's own head also has their pitch.
+            var forward = proxy.Remote != null ? proxy.Remote.Head.forward : head.forward;
+            return Vector3.Angle(forward, (target.position - head.position).normalized) < maxAngle;
+        }
+
         /// <summary>Replaces reading <c>player.cCon.velocity</c>: a remote player's is how fast their stand-in moves.</summary>
         public static Vector3 VelocityOf(ENT_Player player, Component? self) =>
             TryGetRemote(self, out var proxy) && IsLocalPlayer(player) ? proxy!.GetTrueVelocity() : player.cCon.velocity;

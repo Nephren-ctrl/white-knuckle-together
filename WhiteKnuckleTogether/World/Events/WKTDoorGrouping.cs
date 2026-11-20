@@ -42,6 +42,8 @@ namespace WhiteKnuckleTogether {
                     if (!player.Alive) continue;
                     ref var latch = ref latches[player.Id];
                     var side = GetSide(player.Position, gate.ZoneMin, gate.ZoneMax);
+                    if (side == WKTGateSide.Through && !CanReach(player.Room, gate.LevelRoom))
+                        side = WKTGateSide.Near;
                     UpdateLatch(ref latch, side, player.Room, gate.Room, gate.Current, deltaTime);
                     living++;
                     if (latch.Through)
@@ -61,6 +63,14 @@ namespace WhiteKnuckleTogether {
 
         /// <summary>Forgets every player's progress, such as after a change of host.</summary>
         public void Clear() => m_latches.Clear();
+
+        /// <summary>
+        /// Whether a player in <paramref name="playerRoom"/> can touch a trigger of the level <paramref name="levelRoom"/>: the
+        /// game only switches on the player's level and its neighbours, so a trigger is touched from its own level, the one
+        /// before it or later ones. A route that runs flat or bends back (the abyss) puts other levels inside a trigger's box or
+        /// under its footprint. True when either is unknown.
+        /// </summary>
+        public static bool CanReach(int playerRoom, int levelRoom) => playerRoom < 0 || levelRoom < 0 || playerRoom >= levelRoom - 1;
 
         /// <summary>Whether a player has gone through a gate. False for gates or players never seen.</summary>
         public bool IsThrough(ulong key, byte playerId) => m_latches.TryGetValue(key, out var latches) && latches[playerId].Through;
@@ -134,13 +144,14 @@ namespace WhiteKnuckleTogether {
         public static bool Decide(bool passed, bool blocked, bool current) => !passed || (blocked && current);
 
         /// <summary>
-        /// The room a gate counts as being in: the one its pass zone's height is in, but never more than one past the level its
-        /// door belongs to. A zone above its level's exit (the vent out of the Teeth's shaft is passed by climbing above it)
-        /// otherwise put the gate several rooms ahead, so it stayed shut for everyone. Either room is -1 when unknown.
+        /// The room a gate counts as being in: the one its pass zone's height is in, but never more than one away from the level
+        /// its door belongs to. A zone above its level's exit (the vent out of the Teeth's shaft is passed by climbing above it)
+        /// otherwise put the gate several rooms ahead, so it stayed shut for everyone; on a flat stretch (the abyss) every level
+        /// starts at the same height, which put the Nest safe area's door eight rooms back. Either room is -1 when unknown.
         /// </summary>
         public static int GetGateRoom(int zoneRoom, int levelRoom) {
             if (levelRoom < 0) return zoneRoom;
-            return zoneRoom < 0 ? levelRoom : Mathf.Min(zoneRoom, levelRoom + 1);
+            return zoneRoom < 0 ? levelRoom : Mathf.Clamp(zoneRoom, levelRoom - 1, levelRoom + 1);
         }
 
         private static bool IsInside(Vector3 position, Vector3 min, Vector3 max) =>
@@ -158,9 +169,12 @@ namespace WhiteKnuckleTogether {
         public readonly Vector3 DoorwayMax;
         /// <summary>The route room the gate leads into, -1 if unknown.</summary>
         public readonly int Room;
+        /// <summary>The route room of the level the gate's door belongs to, -1 if unknown (see <see cref="WKTDoorGrouping.CanReach"/>).</summary>
+        public readonly int LevelRoom;
         public readonly bool Current;
 
-        public WKTGroupGate(ulong key, Vector3 zoneMin, Vector3 zoneMax, Vector3 doorwayMin, Vector3 doorwayMax, int room, bool current) {
+        public WKTGroupGate(ulong key, Vector3 zoneMin, Vector3 zoneMax, Vector3 doorwayMin, Vector3 doorwayMax, int room, bool current, int levelRoom = -1) {
+            LevelRoom = levelRoom;
             Key = key;
             ZoneMin = zoneMin;
             ZoneMax = zoneMax;

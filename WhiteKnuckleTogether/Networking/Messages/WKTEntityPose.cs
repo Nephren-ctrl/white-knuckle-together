@@ -2,17 +2,23 @@ using System;
 using UnityEngine;
 
 namespace WhiteKnuckleTogether {
-    /// <summary>Where a replicated world object is, in world-offset-corrected space.</summary>
+    /// <summary>
+    /// Where a replicated world object is, in world-offset-corrected space, and what moving thing carries it, if anything
+    /// (see <see cref="WKTPlatformZones"/>).
+    /// </summary>
     public readonly struct WKTEntityPose : IWKTInterpolatable<WKTEntityPose> {
         public Vector3 Position { get; }
         public Quaternion Rotation { get; }
+        public WKTPlatformRef Platform { get; }
 
-        public WKTEntityPose(Vector3 position, Quaternion rotation) {
+        public WKTEntityPose(Vector3 position, Quaternion rotation, in WKTPlatformRef platform = default) {
             Position = position;
             Rotation = rotation;
+            Platform = platform;
         }
 
-        public WKTEntityPose LerpTo(in WKTEntityPose to, float t) => new(Position + (to.Position - Position) * t, Slerp(Rotation, to.Rotation, t));
+        public WKTEntityPose LerpTo(in WKTEntityPose to, float t) =>
+            new(Position + (to.Position - Position) * t, Slerp(Rotation, to.Rotation, t), WKTPlatformRef.Lerp(Platform, to.Platform, t));
 
         /// <summary>Spherical interpolation the short way around, in managed code so it behaves the same everywhere.</summary>
         public static Quaternion Slerp(Quaternion from, Quaternion to, float t) {
@@ -38,6 +44,6 @@ namespace WhiteKnuckleTogether {
             return length > 0f ? new Quaternion(result.x / length, result.y / length, result.z / length, result.w / length) : to;
         }
 
-        public WKTEntityPose WithPosition(Vector3 position) => new(position, Rotation);
+        public WKTEntityPose WithPosition(Vector3 position) => new(position, Rotation, Platform);
     }
 }

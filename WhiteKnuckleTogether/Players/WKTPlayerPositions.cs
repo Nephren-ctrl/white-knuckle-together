@@ -97,6 +97,12 @@ namespace WhiteKnuckleTogether {
             return IsCoveringAllPlayers ? Nearest(self.transform.position, local) : local;
         }
 
+        /// <summary>
+        /// Replaces <c>Vector3.Distance(local, position)</c> in a proximity check against the local camera: the distance from
+        /// <paramref name="position"/> to the nearest player.
+        /// </summary>
+        public static float DistanceToNearest(Vector3 local, Vector3 position) => Vector3.Distance(Nearest(position, local), position);
+
         /// <summary>Replaces <c>CL_GameManager.PlayerDistance</c> in the game's proximity checks: the distance to the nearest player.</summary>
         public static float NearestDistance(CL_GameManager gameManager, Vector3 location) {
             var local = gameManager.PlayerDistance(location);

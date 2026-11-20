@@ -63,7 +63,7 @@ namespace WhiteKnuckleTogether {
                 Engaged = motion.Engaged
             };
             if (keyframe || HasMoved(tracked.Pose, pose))
-                state.Flags |= WKTEntityState.FLAG_POSE;
+                state.Flags |= pose.Platform.IsSet ? (ushort)(WKTEntityState.FLAG_POSE | WKTEntityState.FLAG_PLATFORM) : WKTEntityState.FLAG_POSE;
             if (keyframe || !Mathf.Approximately(tracked.Health, health))
                 state.Flags |= WKTEntityState.FLAG_HEALTH;
             if (animatorCount > 0 && (keyframe || HasAnimatorChanged(tracked, animatorValues, animatorCount)))
@@ -78,13 +78,13 @@ namespace WhiteKnuckleTogether {
                 state.Flags |= WKTEntityState.FLAG_VELOCITY;
             if (dead)
                 state.Flags |= WKTEntityState.FLAG_DEAD;
-            const byte changes = WKTEntityState.FLAG_POSE | WKTEntityState.FLAG_HEALTH | WKTEntityState.FLAG_ANIMATOR |
+            const ushort changes = WKTEntityState.FLAG_POSE | WKTEntityState.FLAG_HEALTH | WKTEntityState.FLAG_ANIMATOR |
                 WKTEntityState.FLAG_ANIMATOR_STATES | WKTEntityState.FLAG_AI | WKTEntityState.FLAG_ENGAGED;
             var changed = (state.Flags & changes) != 0 || dead != tracked.Dead;
             if (!changed) return;
             if (state.Has(WKTEntityState.FLAG_ANIMATOR)) {
                 if (m_animatorUsed + animatorCount > m_animatorValues.Length)
-                    state.Flags &= unchecked((byte)~WKTEntityState.FLAG_ANIMATOR);
+                    state.Flags &= unchecked((ushort)~WKTEntityState.FLAG_ANIMATOR);
                 else {
                     state.AnimatorCount = animatorCount;
                     animatorValues.Slice(0, animatorCount).CopyTo(m_animatorValues.AsSpan(m_animatorUsed));
@@ -94,7 +94,7 @@ namespace WhiteKnuckleTogether {
             }
             if (state.Has(WKTEntityState.FLAG_ANIMATOR_STATES)) {
                 if (m_statesUsed + stateCount > m_animatorStates.Length)
-                    state.Flags &= unchecked((byte)~WKTEntityState.FLAG_ANIMATOR_STATES);
+                    state.Flags &= unchecked((ushort)~WKTEntityState.FLAG_ANIMATOR_STATES);
                 else {
                     state.StateCount = stateCount;
                     animatorStates.Slice(0, stateCount).CopyTo(m_animatorStates.AsSpan(m_statesUsed));

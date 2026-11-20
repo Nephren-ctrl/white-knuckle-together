@@ -125,7 +125,7 @@ namespace WhiteKnuckleTogether {
         /// The path down from the keyed level holding <paramref name="platform"/>, or from the Hadal Diver, if it is shallow
         /// enough to send.
         /// </summary>
-        private bool TryDescribe(Transform platform, out WKTPlatformRef frame) {
+        public bool TryDescribe(Transform platform, out WKTPlatformRef frame) {
             frame = default;
             var depth = 0;
             var current = platform;
@@ -150,7 +150,8 @@ namespace WhiteKnuckleTogether {
             return false;
         }
 
-        private bool TryResolve(in WKTPlatformRef platform, out Transform transform) {
+        /// <summary>This machine's copy of <paramref name="platform"/>, cached.</summary>
+        public bool TryResolve(in WKTPlatformRef platform, out Transform transform) {
             var frame = new WKTPlatformRef(platform.LevelKey, platform.Depth, platform.PathLow, platform.PathHigh, platform.NameHash, Vector3.zero);
             var now = Time.unscaledTime;
             if (m_resolved.TryGetValue(frame, out var cached)) {
