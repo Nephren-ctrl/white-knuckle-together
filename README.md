@@ -11,7 +11,7 @@ Online multiplayer for [White Knuckle](https://store.steampowered.com/app/319579
 - **Race:** race up the same world. An orb follows the leader and hurts anyone left outside it. The last player alive, or the first to finish, wins.
 - **Voice and text chat**, with optional proximity voice.
 - **Lobby modifiers:** Iron Knuckle, Hard Mode, instanced worlds, shared roaches, item stealing, grab assists and more.
-- **Multiplayer-specific mechanics:** steal items from players' hands, help other climbers with grab assists, and respawn everyone using disks.
+- **Multiplayer-specific mechanics:** steal items from players' hands, help other climbers with grab assists, keep players together via damaging orb, and respawn everyone using disks.
 - **Nobody left behind:** safety features that stop players from getting trapped behind closed doors.
 - **Public lobbies**, or friends-only / invite-only.
 
