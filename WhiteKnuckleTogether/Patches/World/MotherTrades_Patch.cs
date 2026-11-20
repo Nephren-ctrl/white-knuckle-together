@@ -36,7 +36,7 @@ namespace WhiteKnuckleTogether {
         private static void Postfix(DEN_Mother __instance) => WKTMotherTrades.OnReleased(__instance);
     }
 
-    /// <summary>A remote player's trade pays them, not the host.</summary>
+    /// <summary>A remote player's trade (with Mother or a Rho altar) pays them, not the host.</summary>
     [HarmonyPatch(typeof(ENT_Player), nameof(ENT_Player.AddPerk))]
     internal sealed class MotherRewardPerk_Patch {
         [UsedImplicitly]
@@ -51,13 +51,13 @@ namespace WhiteKnuckleTogether {
     [HarmonyPatch(typeof(CL_GameManager), nameof(CL_GameManager.SetGameFlag))]
     internal sealed class MotherRewardFlag_Patch {
         [UsedImplicitly]
-        private static void Postfix(string __0, bool __1) {
+        private static void Postfix(string __0, bool __1, string __2) {
             if (WKTMotherTrades.IsRemoteTrade)
-                WKTMotherTrades.OnFlagSet(__0, __1);
+                WKTMotherTrades.OnFlagSet(__0, __1, __2);
         }
     }
 
-    /// <summary>Whether Mother trades at all depends on the giver's perks, not the host's.</summary>
+    /// <summary>Whether, and what, Mother or a Rho altar trades depends on the giver's bindings, not the host's.</summary>
     [HarmonyPatch(typeof(ENT_Player), nameof(ENT_Player.HasPerk))]
     internal sealed class MotherTraderPerk_Patch {
         [UsedImplicitly]

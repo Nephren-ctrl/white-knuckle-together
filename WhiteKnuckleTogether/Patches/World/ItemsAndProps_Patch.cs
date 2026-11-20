@@ -74,6 +74,19 @@ namespace WhiteKnuckleTogether {
         }
     }
 
+    /// <summary>A stuck prop coming loose where it is simulated comes loose everywhere (see <see cref="WKTAuthoritySync.OnLocalUnstick"/>).</summary>
+    [WKTCriticalPatch(WKTPatchCategory.WorldSync), HarmonyPatch(typeof(CL_Prop), nameof(CL_Prop.Unstick))]
+    internal sealed class PropUnstick_Patch {
+        [UsedImplicitly]
+        private static void Prefix(CL_Prop __instance, out bool __state) => __state = __instance.stuck;
+
+        [UsedImplicitly]
+        private static void Postfix(CL_Prop __instance, bool __state) {
+            if (__state && !__instance.stuck && WKTWorldSync.Instance is { } sync && __instance.TryGetComponent<WKTNetIdentity>(out var identity))
+                sync.Authority.OnLocalUnstick(identity);
+        }
+    }
+
     /// <summary>The local player letting go of a prop with every hand hands it on to whoever should simulate it now.</summary>
     [WKTCriticalPatch(WKTPatchCategory.WorldSync), HarmonyPatch(typeof(CL_Prop), nameof(CL_Prop.StopInteract))]
     internal sealed class PropStopInteract_Patch {

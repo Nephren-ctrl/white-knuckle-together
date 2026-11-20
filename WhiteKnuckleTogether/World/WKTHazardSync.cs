@@ -23,7 +23,15 @@ namespace WhiteKnuckleTogether {
         /// <summary>A recycler destroys what it took (its <c>recycleEvent</c>: sparks, a shake and its sound).</summary>
         RecyclerRecycle,
         /// <summary>A recycler pays out (its <c>cashEvent</c>: its sound).</summary>
-        RecyclerCash
+        RecyclerCash,
+        /// <summary>A Rho altar takes an item (its <c>placeEvent</c>: its wait effect).</summary>
+        AltarPlace,
+        /// <summary>A Rho altar refuses an item (its deny sound).</summary>
+        AltarDeny,
+        /// <summary>A Rho altar's take counted (its receive sound and <c>recieveEvent</c>).</summary>
+        AltarReceive,
+        /// <summary>A Rho altar trades, with the reward it picked (that reward's and its own <c>tradeEvent</c>, an accept sound).</summary>
+        AltarTrade
     }
 
     /// <summary>
@@ -39,6 +47,8 @@ namespace WhiteKnuckleTogether {
     /// <item>Only the host's recyclers run (see <see cref="WKTRecyclers"/>), so each recycle and payout plays its effects on
     /// every client's copy too, and the per-tag events that went off: what they show (a grub's gore and alarm, an explosion,
     /// which hurts each player by their own copy) and the recycler stopping. Their drones and score stay the host's.</item>
+    /// <item>Only the host's Rho altars run (see <see cref="WKTRhoAltars"/>), so what each one shows and sounds plays on every
+    /// client's copy too. What it gives, its achievement and its flags stay the host's.</item>
     /// </list>
     /// Every machine runs a strike or flash itself, and each player is only hurt by their own copy (it runs in
     /// <see cref="WKTSharedEffectScope"/>). Owned by <see cref="WKTWorldSync"/>.
@@ -156,6 +166,9 @@ namespace WhiteKnuckleTogether {
         /// </summary>
         public void OnRecycler(ENV_Recycler recycler, WKTHazardCall call, byte tags = 0) => Broadcast(recycler, call, null, tags);
 
+        /// <summary>Host only: a Rho altar did something every client's copy shows too; a trade carries the reward it picked.</summary>
+        public void OnAltar(ENV_RhoAltar altar, WKTHazardCall call, byte reward = 0) => Broadcast(altar, call, null, reward);
+
         /// <summary>A bit for each of a recycler's per-tag events (up to 8) that <paramref name="tagger"/> sets off, as the game picks them.</summary>
         public static byte RecycleTags(ENV_Recycler recycler, ObjectTagger? tagger) {
             byte tags = 0;
@@ -217,22 +230,30 @@ namespace WhiteKnuckleTogether {
             return isOrchid;
         }
 
-        /// <summary>Kills an orchid as its own damage would, once: a dead one stays as it is, so its vine never grows twice.</summary>
+        /// <summary>
+        /// Kills an orchid as its own damage would, once: a dead one stays as it is, so its vine never grows twice. Its
+        /// <c>DamageEvent</c> fires first, as in <c>UT_Damage.Damage</c>: the rope flower in the safe room before the Nest drops
+        /// its rope from that event, not from its kill.
+        /// </summary>
         private static void KillOrchid(UT_Damage damage) {
             if (s_damageDead(damage)) return;
             s_damageDead(damage) = true;
+            damage.DamageEvent.Invoke();
             damage.health = 0f;
             damage.Kill();
         }
 
         #endregion
 
+        /// <summary>Whether a call carries a byte: a recycle's tags, or a trade's reward.</summary>
+        private static bool CarriesByte(WKTHazardCall call) => call is WKTHazardCall.RecyclerRecycle or WKTHazardCall.AltarTrade;
+
         private void Broadcast(MonoBehaviour hazard, WKTHazardCall call, WKTPlayer? except, byte tags = 0) {
             if (!WKTContentSeeding.TryGetKey(hazard, out var key)) return;
             var writer = m_network.BeginMessage(WKTMessageId.HazardCall);
             writer.Put(key);
             writer.Put((byte)call);
-            if (call == WKTHazardCall.RecyclerRecycle)
+            if (CarriesByte(call))
                 writer.Put(tags);
             if (m_sync.IsHost)
                 m_network.Broadcast(writer, SendType.Reliable, except);
@@ -241,10 +262,10 @@ namespace WhiteKnuckleTogether {
         }
 
         public void OnHazardCall(WKTPlayer sender, NetDataReader reader) {
-            if (!reader.TryGetULong(out var key) || !reader.TryGetByte(out var callByte) || callByte > (byte)WKTHazardCall.RecyclerCash) return;
+            if (!reader.TryGetULong(out var key) || !reader.TryGetByte(out var callByte) || callByte > (byte)WKTHazardCall.AltarTrade) return;
             var call = (WKTHazardCall)callByte;
             byte tags = 0;
-            if (call == WKTHazardCall.RecyclerRecycle && !reader.TryGetByte(out tags)) return;
+            if (CarriesByte(call) && !reader.TryGetByte(out tags)) return;
             if (m_sync.IsHost) {
                 // Only flashes and orchid kills come from clients: the host decides walls and lightning.
                 if (sender.IsHost || call is not (WKTHazardCall.FlowerFlash or WKTHazardCall.OrchidKill)) return;
@@ -283,6 +304,10 @@ namespace WhiteKnuckleTogether {
                     case WKTHazardCall.RecyclerCash when hazard is ENV_Recycler recycler && !m_sync.IsHost:
                         recycler.cashEvent.Invoke();
                         break;
+                    case WKTHazardCall.AltarPlace or WKTHazardCall.AltarDeny or WKTHazardCall.AltarReceive or WKTHazardCall.AltarTrade
+                        when hazard is ENV_RhoAltar altar && !m_sync.IsHost:
+                        WKTRhoAltars.Replay(altar, call, tags);
+                        break;
                 }
             }
             finally {
@@ -316,6 +341,8 @@ namespace WhiteKnuckleTogether {
                 WKTHazardCall.OrchidKill => Object.FindObjectsByType<UT_Damage>(FindObjectsInactive.Include, FindObjectsSortMode.None),
                 WKTHazardCall.RecyclerRecycle or WKTHazardCall.RecyclerCash =>
                     Object.FindObjectsByType<ENV_Recycler>(FindObjectsInactive.Include, FindObjectsSortMode.None),
+                WKTHazardCall.AltarPlace or WKTHazardCall.AltarDeny or WKTHazardCall.AltarReceive or WKTHazardCall.AltarTrade =>
+                    Object.FindObjectsByType<ENV_RhoAltar>(FindObjectsInactive.Include, FindObjectsSortMode.None),
                 _ => Object.FindObjectsByType<ENV_Flashflower>(FindObjectsInactive.Include, FindObjectsSortMode.None)
             };
             foreach (var candidate in candidates) {

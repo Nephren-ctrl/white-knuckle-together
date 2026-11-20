@@ -42,6 +42,8 @@ namespace WhiteKnuckleTogether {
         private static readonly HashSet<string> s_missingPrefabs = new();
         /// <summary>Prefabs no asset database lists, found among loaded objects by name.</summary>
         private static readonly Dictionary<string, GameObject> s_loadedPrefabs = new();
+        /// <summary>What spawner hand items can make (see <see cref="TryGetSpawnerAsset"/>), by prefab name.</summary>
+        private static readonly Dictionary<string, GameObject> s_spawnerAssets = new();
         private static readonly AccessTools.FieldRef<List<CL_AssetManager.WKDatabaseHolder>?> s_assetDatabases =
             AccessTools.StaticFieldRefAccess<List<CL_AssetManager.WKDatabaseHolder>?>(AccessTools.Field(typeof(CL_AssetManager), "databases"));
         private static readonly List<CL_Handhold> s_handholdScratch = new();
@@ -125,6 +127,7 @@ namespace WhiteKnuckleTogether {
         public WKTPlayerInventories Inventories { get; private set; } = null!;
         public WKTEnemyShots EnemyShots { get; private set; } = null!;
         public WKTRecyclers Recyclers { get; private set; } = null!;
+        public WKTRhoAltars RhoAltars { get; private set; } = null!;
         public WKTHazardSync Hazards { get; private set; } = null!;
         public WKTLadderSecret Ladder { get; private set; } = null!;
         public WKTEventSpawns EventSpawns { get; private set; } = null!;
@@ -164,6 +167,7 @@ namespace WhiteKnuckleTogether {
             Inventories = new WKTPlayerInventories(this, m_network);
             EnemyShots = new WKTEnemyShots(this, m_network);
             Recyclers = new WKTRecyclers(this, m_network);
+            RhoAltars = new WKTRhoAltars(this);
             Hazards = new WKTHazardSync(this, m_network);
             Ladder = new WKTLadderSecret(this, m_network);
             EventSpawns = new WKTEventSpawns(this, m_network);
@@ -205,6 +209,7 @@ namespace WhiteKnuckleTogether {
             messages.Register(WKTMessageId.EntityAuthority, Authority.OnEntityAuthority);
             messages.Register(WKTMessageId.OwnerStates, Authority.OnOwnerStates);
             messages.Register(WKTMessageId.EntityRelease, Authority.OnEntityRelease);
+            messages.Register(WKTMessageId.PropUnstuck, Authority.OnPropUnstuck);
             messages.Register(WKTMessageId.RiderInput, SharedHolds.OnRiderInput);
             messages.Register(WKTMessageId.RiderBuck, SharedHolds.OnRiderBuck);
             messages.Register(WKTMessageId.FlierBucked, SharedHolds.OnFlierBucked);
@@ -284,6 +289,7 @@ namespace WhiteKnuckleTogether {
             Inventories.Clear();
             EnemyShots.Clear();
             Recyclers.Clear();
+            RhoAltars.Clear();
             Hazards.Clear();
             Ladder.Clear();
             EventSpawns.Clear();
@@ -310,6 +316,7 @@ namespace WhiteKnuckleTogether {
             messages.Unregister(WKTMessageId.EntityAuthority);
             messages.Unregister(WKTMessageId.OwnerStates);
             messages.Unregister(WKTMessageId.EntityRelease);
+            messages.Unregister(WKTMessageId.PropUnstuck);
             messages.Unregister(WKTMessageId.RiderInput);
             messages.Unregister(WKTMessageId.RiderBuck);
             messages.Unregister(WKTMessageId.FlierBucked);
@@ -415,6 +422,9 @@ namespace WhiteKnuckleTogether {
                 switch (action) {
                     case WKTUnclaimedAction.Hide:
                         identityObject.SetActive(false);
+                        // Its model sits beside it; once bound, the Teeth's presenter shows it as the host's is.
+                        if (identity.Entity is DEN_Teeth teeth && teeth.geoRoot != null)
+                            teeth.geoRoot.gameObject.SetActive(false);
                         break;
                     case WKTUnclaimedAction.Forget:
                         if (identity.Key != 0)
@@ -487,6 +497,9 @@ namespace WhiteKnuckleTogether {
                 var writer = m_network.BeginMessage(WKTMessageId.EntityBind);
                 m_bind.Write(writer);
                 m_network.Broadcast(writer, SendType.Reliable);
+                // It just played its spawn sound in Awake, before it had a handle to send it with.
+                if (identity.Entity is DEN_Teeth spawned)
+                    Sounds.SendExcept(spawned.clipHandler, TeethSpawnCue_Patch.SPAWN_SOUND, null);
                 return;
             }
             if (!hasKey) {
@@ -498,6 +511,11 @@ namespace WhiteKnuckleTogether {
             identity.Key = key;
             NameHandholds(identity);
             m_binder.OnLocalRegister(key, identity);
+            // Bound as it wakes: the host's Teeth spawned before this copy could hear it, so its spawn plays here, where it is.
+            if (identity.Handle != 0 && identity.Entity is DEN_Teeth teeth) {
+                WKTEntitySounds.PlayLocal(teeth.clipHandler, TeethSpawnCue_Patch.SPAWN_SOUND);
+                CL_CameraControl.CalculateShake(identity.transform.position, TeethSpawnCue_Patch.SHAKE, TeethSpawnCue_Patch.SHAKE_DISTANCE);
+            }
         }
 
         /// <summary>The object's handholds, such as a flier's or a stuck rebar's, are named by its key on every machine.</summary>
@@ -1097,6 +1115,10 @@ namespace WhiteKnuckleTogether {
             ApplyItemData(identity, bind);
             ClearBuffer(bind.Handle);
             Authority.OnBound(identity);
+            // Each copy of a runtime object that removes itself on a timer, such as the remote's handhold, goes on its own,
+            // just before or after the host's: one gone first is not remade.
+            if (IsRuntimeOnly(bind) && identity.Kind != WKTNetKind.Item && identity.TryGetComponent<UT_DestroyAfterTime>(out var timer) && !timer.disableAfterTime)
+                m_binder.MarkDead(bind.Handle);
         }
 
         public WKTNetIdentity? Spawn(WKTEntityBind bind) {
@@ -1243,8 +1265,9 @@ namespace WhiteKnuckleTogether {
                 s_puppetEntities.Remove(identity.Entity.GetInstanceID());
             if (identity.Prop != null)
                 s_puppetEntities.Remove(identity.Prop.GetInstanceID());
+            // A stuck prop stays kinematic until it comes loose, even one made a puppet before its CL_Prop.Start made it so.
             if (identity.Body != null)
-                identity.Body.isKinematic = identity.BodyWasKinematic;
+                identity.Body.isKinematic = identity.BodyWasKinematic || (identity.Prop != null && identity.Prop.stuck);
         }
 
         /// <summary>Forgets an object's buffered poses, as when the machine sending them changes.</summary>
@@ -1459,6 +1482,8 @@ namespace WhiteKnuckleTogether {
                 // An item that is also a creature (a ruby roach) may be simulated by a client: the host's bag holds it now.
                 if (handle != 0 && identity.Owner != WKTEntityAuthority.HOST)
                     Authority.Reclaim(handle);
+                // It keeps its handle in the host's bag: dropped again, it is the host's, no longer whoever dropped it before.
+                Recyclers.Forget(handle);
                 return;
             }
             if (handle == 0) {
@@ -1593,8 +1618,8 @@ namespace WhiteKnuckleTogether {
 
         /// <summary>
         /// Opens a scope around the local player's own action, such as a thrown rebar sticking in a wall or a piton falling
-        /// out. Items it spawns into the world are handed to the host like drops instead of being hidden. Returns whether a
-        /// scope was opened, to pass to <see cref="EndLocalSpawn"/>.
+        /// out. Items and entities (a spawner hand item's handhold) it spawns into the world are handed to the host like drops
+        /// instead of being hidden. Returns whether a scope was opened, to pass to <see cref="EndLocalSpawn"/>.
         /// </summary>
         public static bool BeginLocalSpawn() {
             var sync = Instance;
@@ -1606,7 +1631,7 @@ namespace WhiteKnuckleTogether {
         /// <summary>Remembers an object spawned while a local spawn scope is open.</summary>
         public static void RecordLocalSpawn(Object? spawned) => s_localSpawns.Record(spawned);
 
-        /// <summary>Closes a scope opened by <see cref="BeginLocalSpawn"/>; the outermost one hands its items to the host.</summary>
+        /// <summary>Closes a scope opened by <see cref="BeginLocalSpawn"/>; the outermost one hands what it spawned to the host.</summary>
         public static void EndLocalSpawn(bool began) {
             if (!began || !s_localSpawns.Exit()) return;
             s_localSpawnScratch.Clear();
@@ -1628,9 +1653,14 @@ namespace WhiteKnuckleTogether {
             };
             if (spawnedObject == null || !spawnedObject.activeSelf || IsInInventory(spawnedObject)) return;
             if (!spawnedObject.TryGetComponent<Item_Object>(out var itemObject)) {
-                // Only items can be handed over. Anything else stays the client's own, and is hidden like any such object.
+                // The host makes only what a spawner hand item can, so anything else, such as what a breaking handhold
+                // leaves, is never asked for.
+                if (spawnedObject.TryGetComponent<GameEntity>(out var entity) && TryGetSpawnerAsset(PrefabNameOf(spawnedObject.name), out _)) {
+                    OnLocalSpawnedEntity(entity);
+                    return;
+                }
                 if (s_unclaimableSpawns.Add(spawnedObject.name))
-                    WKT.Instance.Logger.LogWarning($"The local player spawned {spawnedObject.name}, which is not an item. Only this player sees it.");
+                    WKT.Instance.Logger.LogWarning($"The local player spawned {spawnedObject.name}, which is neither an item nor a spawner hand item's object, so it is not shared.");
                 return;
             }
             if (!IsReplicated(itemObject)) return;
@@ -1638,6 +1668,34 @@ namespace WhiteKnuckleTogether {
             if (itemObject.itemData != null && string.IsNullOrEmpty(itemObject.itemData.prefabName))
                 itemObject.itemData.prefabName = WKTPrefabSearch.GetPrefabName(itemObject.name);
             OnLocalSpawnedItem(itemObject);
+        }
+
+        /// <summary>
+        /// Client only: a spawner hand item of the local player's made an object that is not an item, such as the remote's
+        /// handhold. It stays shown, and the host makes it for everyone under the key it is sent with, so this copy binds to it.
+        /// </summary>
+        private void OnLocalSpawnedEntity(GameEntity entity) {
+            if (!IsReplicated(entity)) return;
+            if (entity.TryGetComponent<WKTNetIdentity>(out var existing) && (existing.Handle != 0 || existing.IsLocalDrop)) return;
+            var localPlayer = m_network.LocalPlayer;
+            if (localPlayer == null) return;
+            var token = ++m_dropCount;
+            var key = GetDropKey(localPlayer.Id, token);
+            // Its GameEntity.OnEnable registered it already, without a key, to be hidden at the end of the frame.
+            var identity = AddIdentity(entity, key);
+            identity.IsLocalDrop = true;
+            m_binder.Expect(key, identity);
+            var entityTransform = entity.transform;
+            m_dropRequest.Token = token;
+            m_dropRequest.PrefabId = PrefabNameOf(entity.gameObject.name);
+            m_dropRequest.Position = WKTWorldOffset.ToWire(entityTransform.position, WKTWorldOffset.Get());
+            m_dropRequest.Rotation = entityTransform.rotation;
+            m_dropRequest.Velocity = Vector3.zero;
+            m_dropRequest.Flags = WKTDropRequest.FLAG_ENTITY;
+            m_dropRequest.ItemData.Clear();
+            var writer = m_network.BeginMessage(WKTMessageId.DropRequest);
+            m_dropRequest.Write(writer);
+            m_network.SendToHost(writer, SendType.Reliable);
         }
 
         /// <summary>The key of the item a client drops: the host spawns it under this key, so the client's copy binds to it.</summary>
@@ -1722,6 +1780,10 @@ namespace WhiteKnuckleTogether {
         private void OnDropRequest(WKTPlayer sender, NetDataReader reader) {
             if (!IsHost || sender.IsHost || !WKTDropRequest.TryRead(reader, m_dropRequest)) return;
             var position = WKTWorldOffset.FromWire(m_dropRequest.Position, WKTWorldOffset.Get());
+            if ((m_dropRequest.Flags & WKTDropRequest.FLAG_ENTITY) != 0) {
+                SpawnSpawnerAsset(m_dropRequest.PrefabId, position, m_dropRequest.Rotation, GetDropKey(sender.Id, m_dropRequest.Token));
+                return;
+            }
             var dropped = SpawnItem(m_dropRequest.PrefabId, position, m_dropRequest.Rotation, m_dropRequest.Velocity,
                 (m_dropRequest.Flags & WKTDropRequest.FLAG_KINEMATIC) != 0, (m_dropRequest.Flags & WKTDropRequest.FLAG_USED) != 0,
                 m_dropRequest.ItemData, GetDropKey(sender.Id, m_dropRequest.Token));
@@ -1785,6 +1847,49 @@ namespace WhiteKnuckleTogether {
                 m_spawningKey = 0;
             }
             return instance.TryGetComponent<WKTNetIdentity>(out var identity) ? identity : null;
+        }
+
+        /// <summary>
+        /// Host only: makes what a client's spawner hand item made, registered under <paramref name="key"/>, as
+        /// <c>HandItem_Spawner.StopUse</c> does. Only prefabs a spawner hand item can make are spawned, never any other id.
+        /// </summary>
+        private void SpawnSpawnerAsset(string prefabName, Vector3 position, Quaternion rotation, ulong key) {
+            if (!TryGetSpawnerAsset(prefabName, out var prefab)) {
+                if (s_unclaimableSpawns.Add(prefabName))
+                    WKT.Instance.Logger.LogWarning($"A client asked for {prefabName}, which no spawner hand item makes. Ignored.");
+                return;
+            }
+            GameObject instance;
+            // Its GameEntity registers while spawning, taking the key.
+            m_spawningKey = key;
+            try {
+                instance = Instantiate(prefab!, position, rotation);
+            }
+            finally {
+                m_spawningKey = 0;
+            }
+            instance.transform.parent = WorldLoader.GetCurrentLevelParentRoot();
+        }
+
+        /// <summary>
+        /// The prefab named <paramref name="prefabName"/> that some item's spawner hand item (<c>HandItem_Spawner.spawnAssets</c>)
+        /// makes and that is not an item, such as the remote's handhold. Collected once from the asset databases' items.
+        /// </summary>
+        private static bool TryGetSpawnerAsset(string prefabName, out GameObject? prefab) {
+            if (s_spawnerAssets.Count == 0 && s_assetDatabases() is { } databases) {
+                foreach (var holder in databases) {
+                    if (holder?.database == null) continue;
+                    foreach (var itemPrefab in holder.database.itemPrefabs) {
+                        if (itemPrefab == null || !itemPrefab.TryGetComponent<Item_Object>(out var itemObject) ||
+                            itemObject.itemData?.handItemAsset is not HandItem_Spawner spawner || spawner.spawnAssets == null) continue;
+                        foreach (var asset in spawner.spawnAssets) {
+                            if (asset != null && !asset.TryGetComponent<Item_Object>(out _))
+                                s_spawnerAssets[asset.name] = asset;
+                        }
+                    }
+                }
+            }
+            return s_spawnerAssets.TryGetValue(prefabName, out prefab);
         }
 
         /// <summary>

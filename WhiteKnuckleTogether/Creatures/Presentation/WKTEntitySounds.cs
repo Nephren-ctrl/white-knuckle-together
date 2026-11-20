@@ -38,7 +38,7 @@ namespace WhiteKnuckleTogether {
         public static bool BeforeSound(UT_AudioClipHandler handler, WKTEntitySoundKind kind, string sound, float volume, Vector3 position) {
             var sounds = WKTWorldSync.Instance?.Sounds;
             if (sounds == null || handler == null) return true;
-            if (WKTMeleeReplay.SuppressesSound(sound)) return false;
+            if (WKTMeleeReplay.SuppressesSound(sound) || TeethSpawnCue_Patch.IsMuting) return false;
             var localScope = WKTLocalReplayScope.IsOpen || WKTPuppetHitScope.IsOpen;
             var resolved = sounds.Resolve(handler);
             var identity = resolved.Identity;
@@ -73,6 +73,15 @@ namespace WhiteKnuckleTogether {
         public void PlayAndSendExcept(UT_AudioClipHandler? handler, string sound, WKTPlayer? except) {
             if (handler == null) return;
             PlayLocal(handler, sound);
+            SendExcept(handler, sound, except);
+        }
+
+        /// <summary>
+        /// Host only: sends an entity's sound that already played here to the players near it except <paramref name="except"/>,
+        /// such as the Teeth's spawn, which plays in its <c>Awake</c> before it is registered.
+        /// </summary>
+        public void SendExcept(UT_AudioClipHandler? handler, string sound, WKTPlayer? except) {
+            if (handler == null) return;
             var resolved = Resolve(handler);
             if (!m_sync.IsHost || resolved.Identity == null || !WKTEntitySoundRules.TryFind(handler.groups, sound, out var group, out var set)) return;
             SendNear(new WKTEntitySound(resolved.Identity.Handle, resolved.Index, WKTEntitySoundKind.Play, group, set), resolved.Identity.transform.position, except);
@@ -247,6 +256,9 @@ namespace WhiteKnuckleTogether {
                     audioSet.StopSound();
                     break;
             }
+            // DEN_Teeth.Awake shakes the camera with its spawn sound; a client's own copy skips both (see TeethSpawnCue_Patch).
+            if (sound.Kind == WKTEntitySoundKind.Play && identity.Entity is DEN_Teeth && audioSet.name == TeethSpawnCue_Patch.SPAWN_SET)
+                CL_CameraControl.CalculateShake(identity.transform.position, TeethSpawnCue_Patch.SHAKE, TeethSpawnCue_Patch.SHAKE_DISTANCE);
         }
 
         private readonly struct Resolved {

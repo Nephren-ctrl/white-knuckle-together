@@ -442,6 +442,11 @@ namespace WhiteKnuckleTogether {
         /// Host to one client, reliable: the host's Mother started crushing that client, whose camera she now pulls toward her
         /// (see <see cref="WKTMotherWrath.OnGlare"/>). Payload: entity handle.
         /// </summary>
-        MotherGlare = 123
+        MotherGlare = 123,
+        /// <summary>
+        /// Client to host and host to everyone else, reliable: a stuck prop came loose where it is simulated (see
+        /// <see cref="WKTAuthoritySync.OnLocalUnstick"/>). Payload: entity handle.
+        /// </summary>
+        PropUnstuck = 124
     }
 }

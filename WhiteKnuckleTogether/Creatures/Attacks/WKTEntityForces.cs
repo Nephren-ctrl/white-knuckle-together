@@ -77,7 +77,8 @@ namespace WhiteKnuckleTogether {
         public void OnForce(WKTPlayer sender, NetDataReader reader) {
             if (!WKTEntityForce.TryRead(reader, out var force) || !m_sync.TryGetIdentity(force.Handle, out var identity)) return;
             var entity = identity!.Entity;
-            if (entity == null || entity.dead) return;
+            // A dead prop, such as a knocked over turret, can still be pushed around, as in singleplayer.
+            if (entity == null || (entity.dead && identity.Prop == null)) return;
             if (m_sync.IsHost) {
                 if (sender.IsHost) return;
                 if (identity.IsPuppet) {

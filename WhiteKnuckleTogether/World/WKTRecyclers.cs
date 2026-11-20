@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using UnityEngine;
 
 namespace WhiteKnuckleTogether {
     /// <summary>
@@ -25,6 +26,15 @@ namespace WhiteKnuckleTogether {
         /// <summary>Whom a payout is for: a remote dropper, else the host's own player.</summary>
         public static byte PayeeOf(bool hasDropper, byte dropper, byte hostId) => hasDropper ? dropper : hostId;
 
+        /// <summary>Host only: whom a payout for a world item is for: whoever last dropped it, else the host's own player.</summary>
+        public byte PayeeOf(Component? dropObject) {
+            var hasDropper = false;
+            byte dropper = 0;
+            if (dropObject != null && dropObject.TryGetComponent<WKTNetIdentity>(out var identity) && identity.Handle != 0)
+                hasDropper = m_droppers.TryGetValue(identity.Handle, out dropper);
+            return PayeeOf(hasDropper, dropper, m_network.LocalPlayer?.Id ?? WKTEntityAuthority.NOBODY);
+        }
+
         public void Clear() {
             m_droppers.Clear();
             m_payouts.Clear();
@@ -50,17 +60,12 @@ namespace WhiteKnuckleTogether {
         /// <summary>An item is being destroyed. Inside a recycler's Update that is the item it just took, whose payout follows.</summary>
         public void OnItemDestroyed(Item item) {
             if (m_running == null || item.hasBeenDestroyed) return;
-            var dropObject = item.GetDropObject(false);
-            var hasDropper = false;
-            byte dropper = 0;
-            if (dropObject != null && dropObject.TryGetComponent<WKTNetIdentity>(out var identity) && identity.Handle != 0)
-                hasDropper = m_droppers.TryGetValue(identity.Handle, out dropper);
             var id = m_running.GetInstanceID();
             if (!m_payouts.TryGetValue(id, out var queue)) {
                 queue = new Queue<byte>();
                 m_payouts[id] = queue;
             }
-            queue.Enqueue(PayeeOf(hasDropper, dropper, m_network.LocalPlayer?.Id ?? WKTEntityAuthority.NOBODY));
+            queue.Enqueue(PayeeOf(item.GetDropObject(false)));
         }
 
         /// <summary>A recycler pays out, a few seconds after taking an item: to the local player, or to the remote one it was for.</summary>

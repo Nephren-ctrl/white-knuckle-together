@@ -5,15 +5,21 @@ using WhiteKnuckleTogether.Networking.LiteNetLib;
 
 namespace WhiteKnuckleTogether {
     /// <summary>
-    /// A client dropped or threw an item into the world. The host spawns the real item from this, keyed from the client and
-    /// <see cref="Token"/>, so the client's own dropped copy becomes its puppet. World-offset-corrected.
+    /// A client dropped or threw an item into the world, or a spawner hand item of theirs made an object (see
+    /// <see cref="FLAG_ENTITY"/>). The host spawns the real one from this, keyed from the client and <see cref="Token"/>, so
+    /// the client's own copy becomes its puppet. World-offset-corrected.
     /// </summary>
     public sealed class WKTDropRequest {
         /// <summary>The client's copy is held in place, such as a rebar stuck in a wall: the host's must not fall either.</summary>
         public const byte FLAG_KINEMATIC = 1 << 0;
         /// <summary>The item was used already, such as a lit flare.</summary>
         public const byte FLAG_USED = 1 << 1;
-        private const byte c_known_flags = FLAG_KINEMATIC | FLAG_USED;
+        /// <summary>
+        /// Not an item: an object a spawner hand item made, such as the remote's handhold, named by its prefab. The host only
+        /// spawns prefabs a spawner hand item can make.
+        /// </summary>
+        public const byte FLAG_ENTITY = 1 << 2;
+        private const byte c_known_flags = FLAG_KINEMATIC | FLAG_USED | FLAG_ENTITY;
 
         public uint Token { get; set; }
         public string PrefabId { get; set; } = string.Empty;

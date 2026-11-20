@@ -15,7 +15,16 @@ namespace WhiteKnuckleTogether {
     /// </list>
     /// </summary>
     internal static class WKTVentThingGrabs {
+        /// <summary>From <c>DEN_VentThing.LateUpdate</c>: a player looking at the hand scares it off within these distances and angle.</summary>
+        public const float WATCH_HAND_DISTANCE = 15f;
+        public const float WATCH_BODY_DISTANCE = 8f;
+        public const float WATCH_ANGLE = 45f;
+        private const float c_retreat_time = 2.5f;
+        private const float c_fear_distance = 10f;
         private static readonly AccessTools.FieldRef<DEN_VentThing, bool> s_hasGrabbedTarget = AccessTools.FieldRefAccess<DEN_VentThing, bool>("hasGrabbedTarget");
+        private static readonly AccessTools.FieldRef<DEN_VentThing, bool> s_retreating = AccessTools.FieldRefAccess<DEN_VentThing, bool>("retreating");
+        private static readonly AccessTools.FieldRef<DEN_VentThing, float> s_retreatTime = AccessTools.FieldRefAccess<DEN_VentThing, float>("retreatTime");
+        private static readonly AccessTools.FieldRef<DEN_VentThing, int> s_targetWaypointIndex = AccessTools.FieldRefAccess<DEN_VentThing, int>("targetWaypointIndex");
 
         /// <summary>Host: points a Vent Thing whose hand holds nobody at the nearest player, and keeps one that holds someone on them.</summary>
         public static void Retarget(DEN_VentThing thing) {
@@ -55,5 +64,45 @@ namespace WhiteKnuckleTogether {
             if (s_hasGrabbedTarget(thing) && thing.handRenderer != null && !thing.handRenderer.activeSelf)
                 thing.handRenderer.SetActive(true);
         }
+
+        /// <summary>
+        /// Host, after the Vent Thing's own update: its hand backs off when any living player looks at it, as the game's
+        /// <c>LateUpdate</c> only does for its target (see <see cref="WKTTargets.CanSeeTargetOf"/>).
+        /// </summary>
+        public static void BackOffWhenWatched(DEN_VentThing thing) {
+            if (!WKTPlayerPositions.IsCoveringAllPlayers || thing.dead || s_retreating(thing) || s_hasGrabbedTarget(thing) || thing.hand == null) return;
+            var hand = thing.hand.position;
+            var body = thing.transform.position;
+            var target = WKTTargets.TargetOf(thing);
+            var watcher = Vector3.zero;
+            var watched = false;
+            var local = ENT_Player.playerObject;
+            if (target != WKTTargets.LOCAL && local != null && !local.dead && local.cam != null) {
+                var head = local.cam.transform;
+                watcher = local.transform.position;
+                watched = IsWatching(watcher, head.position, head.forward, hand, body);
+            }
+            for (var i = 0; i < WKTPlayerPositions.RemoteCount && !watched; i++) {
+                var id = WKTPlayerPositions.GetRemoteId(i);
+                if (id == target || WKTPlayerPositions.IsRemoteDead(i) || !WKTPlayerProxy.TryGet(id, out var proxy)) continue;
+                var head = proxy!.Head.transform;
+                // The stand-in's head only turns with the body; the remote player's own head also has their pitch.
+                var forward = proxy.Remote != null ? proxy.Remote.Head.forward : head.forward;
+                watcher = WKTPlayerPositions.GetRemotePosition(i);
+                watched = IsWatching(watcher, head.position, forward, hand, body);
+            }
+            if (!watched) return;
+            // The game's own back-off, as for its target.
+            s_retreatTime(thing) = c_retreat_time;
+            s_retreating(thing) = true;
+            s_targetWaypointIndex(thing) = 0;
+            if ((hand - watcher).sqrMagnitude < c_fear_distance * c_fear_distance)
+                thing.clipHandler.PlaySound("hand:fear", hand);
+        }
+
+        /// <summary>Whether a player at <paramref name="player"/>, looking along <paramref name="forward"/> from <paramref name="head"/>, scares the hand off.</summary>
+        public static bool IsWatching(Vector3 player, Vector3 head, Vector3 forward, Vector3 hand, Vector3 body) =>
+            (hand - player).sqrMagnitude < WATCH_HAND_DISTANCE * WATCH_HAND_DISTANCE && (body - player).sqrMagnitude > WATCH_BODY_DISTANCE * WATCH_BODY_DISTANCE &&
+            Vector3.Angle(forward, (hand - head).normalized) < WATCH_ANGLE;
     }
 }

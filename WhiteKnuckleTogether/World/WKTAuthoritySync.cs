@@ -226,6 +226,41 @@ namespace WhiteKnuckleTogether {
             m_network.SendToHost(writer, SendType.Reliable);
         }
 
+        /// <summary>
+        /// A stuck prop (kinematic until pulled or knocked loose, such as the turrets on the floating chunks of
+        /// <c>M3_Habitation_Lab_04</c>) came loose here, where it is simulated. Every other copy comes loose too: a client's pull
+        /// otherwise left the host's copy stuck, and the host made it kinematic again once the client let go.
+        /// </summary>
+        public void OnLocalUnstick(WKTNetIdentity identity) {
+            if (identity.Handle == 0 || identity.IsPuppet) return;
+            var writer = m_network.BeginMessage(WKTMessageId.PropUnstuck);
+            writer.Put(identity.Handle);
+            if (m_sync.IsHost)
+                m_network.Broadcast(writer, SendType.Reliable);
+            else
+                m_network.SendToHost(writer, SendType.Reliable);
+        }
+
+        public void OnPropUnstuck(WKTPlayer sender, NetDataReader reader) {
+            if (!reader.TryGetUShort(out var handle) || !m_sync.TryGetIdentity(handle, out var identity) || identity!.Prop == null) return;
+            if (m_sync.IsHost) {
+                if (sender.IsHost || identity.Owner != sender.Id) return;
+                var writer = m_network.BeginMessage(WKTMessageId.PropUnstuck);
+                writer.Put(handle);
+                m_network.Broadcast(writer, SendType.Reliable, sender);
+            }
+            else if (!sender.IsHost) return;
+            var prop = identity.Prop;
+            if (!prop.stuck) return;
+            if (!identity.IsPuppet) {
+                prop.Unstick();
+                return;
+            }
+            // Free to fall once this machine simulates it again (see WKTWorldSync.ReleasePuppet).
+            prop.stuck = false;
+            identity.BodyWasKinematic = false;
+        }
+
         private static WKTEntityRelease GetRelease(WKTNetIdentity identity) {
             var objectTransform = identity.transform;
             var body = identity.Body;

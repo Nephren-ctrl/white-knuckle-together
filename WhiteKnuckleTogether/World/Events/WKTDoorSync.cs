@@ -270,7 +270,7 @@ namespace WhiteKnuckleTogether {
                     }
                     drivesGoo |= WKTWorldWiring.IsGooTarget(target.GetType());
                     var method = unityEvent.GetPersistentMethodName(i);
-                    if (target is UT_Door door && WKTWorldWiring.IsGateWiring(door.startOpen, method, triggeredByPlayers))
+                    if (target is UT_Door door && WKTWorldWiring.IsGateWiring(door.startOpen, method, triggeredByPlayers, OpensDoor(door)))
                         AddGate(door, input, level);
                     else if (playerZone && TryAddAnimatedGate(zone!, unityEvent, i, target, level)) {
                         masks = masks.WithSkipped(i);
@@ -440,6 +440,18 @@ namespace WhiteKnuckleTogether {
             Component component => component.transform.IsChildOf(root),
             _ => false
         };
+
+        /// <summary>Whether any of the input's events being indexed (<see cref="s_inputEvents"/>) opens <paramref name="door"/>.</summary>
+        private static bool OpensDoor(UT_Door door) {
+            foreach (var (unityEvent, _) in s_inputEvents) {
+                if (unityEvent == null) continue;
+                var count = unityEvent.GetPersistentEventCount();
+                for (var i = 0; i < count; i++) {
+                    if (unityEvent.GetPersistentTarget(i) == door && unityEvent.GetPersistentMethodName(i) == nameof(UT_Door.Open)) return true;
+                }
+            }
+            return false;
+        }
 
         private static bool LooksLikeDoor(UnityEngine.Object target) =>
             target is not UT_Door && target.name.IndexOf("door", StringComparison.OrdinalIgnoreCase) >= 0;

@@ -3,9 +3,9 @@ using System;
 namespace WhiteKnuckleTogether {
     /// <summary>
     /// The campaign's placed progression pickups, which every player gets their own of in a synced co-op run: the flashlights
-    /// and flare guns before and in the Teeth's shaft, the flashlight in the Abyss tram, and the handgun, its ammo, flare gun
-    /// and flashlight in the computer safe rooms before the Nest. One player taking the only flashlight would leave the others
-    /// in the dark. Each machine keeps its own copy (<see cref="WKTLocalObject"/>); a dropped copy is an ordinary shared item.
+    /// and flare guns before and in the Teeth's shaft, the flashlight in the Abyss tram, and the handgun, its ammo, flare gun,
+    /// flashlight and trinket pouch in the computer safe rooms before the Nest. One player taking the only flashlight would
+    /// leave the others in the dark. Each machine keeps its own copy (<see cref="WKTLocalObject"/>); a dropped copy is an ordinary shared item.
     /// <para>
     /// Only the items placed in those rooms (or spawned there by a fixed spawner) count, by their level and their path in it.
     /// Ammo enemies carry or drop is never instanced.
@@ -29,8 +29,10 @@ namespace WhiteKnuckleTogether {
             ("Campaign_Interlude_Abyss_To_Nest_01_SafeArea", "Entities/Items/Handgun"),
             ("Campaign_Interlude_Abyss_To_Nest_01_SafeArea", "Entities/Items/Spawn_Item_Flaregun"),
             ("Campaign_Interlude_Abyss_To_Nest_01_SafeArea", "Entities/Items/Spawn_Item_Flashlight"),
+            ("Campaign_Interlude_Abyss_To_Nest_01_SafeArea", "Entities/Items/Item_Trinket_Pouch"),
             ("Campaign_Interlude_Diver_To_Nest_SafeArea_01", "Entities/Handgun"),
             ("Campaign_Interlude_Diver_To_Nest_SafeArea_01", "Entities/Item_Flaregun"),
+            ("Campaign_Interlude_Diver_To_Nest_SafeArea_01", "Entities/Item_Trinket_Pouch"),
             ("M3_Habitation_Endless_Start", "Entities/Item_Flashlight"),
             ("M3_Habitation_Endless_Start", "Entities/Items/Item_Flaregun"),
             ("M5_Nest_Endless_Start", "Entities/Handgun"),

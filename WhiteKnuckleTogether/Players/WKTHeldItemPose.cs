@@ -30,9 +30,9 @@ namespace WhiteKnuckleTogether {
         private const string c_target_circle = "Target_Circle";
         /// <summary>
         /// Items held the other way around: their negative end in front. A roped rebar's rope is tied at its model's negative
-        /// end, and the rope goes out ahead of the player, as it shows in their own hand.
+        /// end, and the rope goes out ahead of the player, as it shows in their own hand. The handgun's barrel is at its negative end.
         /// </summary>
-        private static readonly HashSet<string> s_reversed = new(StringComparer.OrdinalIgnoreCase) { "Item_RebarRope", "Item_RebarRope_Holiday" };
+        private static readonly HashSet<string> s_reversed = new(StringComparer.OrdinalIgnoreCase) { "Item_RebarRope", "Item_RebarRope_Holiday", "Item_Handgun" };
         private static readonly Dictionary<string, Bounds?> s_shapes = new(StringComparer.OrdinalIgnoreCase);
         private static readonly List<Renderer> s_renderers = new();
 

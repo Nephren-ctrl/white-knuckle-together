@@ -16,8 +16,9 @@ namespace WhiteKnuckleTogether {
 
         [UsedImplicitly]
         private static void Postfix(DEN_VentThing __instance) {
-            if (!WKTWorldSync.IsPuppet(__instance))
-                WKTVentThingGrabs.ShowHandForOthers(__instance);
+            if (WKTWorldSync.IsPuppet(__instance)) return;
+            WKTVentThingGrabs.ShowHandForOthers(__instance);
+            WKTVentThingGrabs.BackOffWhenWatched(__instance);
         }
     }
 

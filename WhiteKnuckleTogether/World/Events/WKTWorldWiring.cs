@@ -9,7 +9,9 @@ namespace WhiteKnuckleTogether {
     internal static class WKTWorldWiring {
         /// <summary>
         /// Machines a player trades with using their own currency or items. Each player uses them for themselves: what they
-        /// hand out reaches the world as that player's drop, never by the host repeating the purchase.
+        /// hand out reaches the world as that player's drop, never by the host repeating the purchase. A Rho altar's trigger
+        /// zone calls each machine's own altar too, so the host never repeats it on clients; only the host's altar runs (see
+        /// <see cref="WKTRhoAltars"/>).
         /// </summary>
         public static readonly string[] PersonalInteractables = {
             nameof(ENV_VendingMachine), nameof(ENV_RationVendor), nameof(ENV_RoachTrader), nameof(ENV_Barterer), nameof(ENV_RhoAltar),
@@ -74,10 +76,11 @@ namespace WhiteKnuckleTogether {
 
         /// <summary>
         /// Whether a door is a gate the group must pass together: open from the start, and closed by a trigger the players
-        /// walk into once they are through.
+        /// walk into once they are through. A door the same trigger also opens is a walk-up door, which opens for whoever comes
+        /// near, such as the airlock at the top of the Nest safe area's elevator shaft.
         /// </summary>
-        public static bool IsGateWiring(bool doorStartsOpen, string methodName, bool triggeredByPlayers) =>
-            doorStartsOpen && triggeredByPlayers && (methodName == nameof(UT_Door.Close) || methodName == nameof(UT_Door.Toggle));
+        public static bool IsGateWiring(bool doorStartsOpen, string methodName, bool triggeredByPlayers, bool triggerOpensIt) =>
+            doorStartsOpen && triggeredByPlayers && !triggerOpensIt && (methodName == nameof(UT_Door.Close) || methodName == nameof(UT_Door.Toggle));
 
         /// <summary>
         /// Door animators known to open again when their bool is set back, checked in the game's assets: the silo doors'

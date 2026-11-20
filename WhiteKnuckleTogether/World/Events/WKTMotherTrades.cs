@@ -26,7 +26,8 @@ namespace WhiteKnuckleTogether {
         public const float ACCEPT_DISTANCE = 6f;
         private const byte c_nobody = byte.MaxValue;
 
-        private const string c_no_shops_perk = "Perk_Binding_NoShops";
+        /// <summary>The bindings that decide whether, and what, Mother or a Rho altar trades: the trader's, not the host's.</summary>
+        private static readonly string[] s_tradeBindings = { "Perk_Binding_NoShops", "Perk_Binding_NoPerks", "Perk_Binding_PitonsAndBeans" };
         private static readonly int s_extendHand = Animator.StringToHash("ExtendHand");
         private static readonly AccessTools.FieldRef<DEN_Mother, bool> s_trading = AccessTools.FieldRefAccess<DEN_Mother, bool>("trading");
         private static readonly AccessTools.FieldRef<DEN_Mother, Item?> s_heldItem = AccessTools.FieldRefAccess<DEN_Mother, Item?>("heldItem");
@@ -196,6 +197,20 @@ namespace WhiteKnuckleTogether {
 
         #region Rewards
 
+        /// <summary>
+        /// Host only: until <see cref="EndReward"/>, what the game gives the local player goes to <paramref name="playerId"/>, as
+        /// for their trade with Mother (used by <see cref="WKTRhoAltars"/>). Nothing changes when that is the host's own player.
+        /// </summary>
+        public static void BeginReward(byte playerId) {
+            if (s_instance != null && s_instance.m_network.Mode == NetworkMode.Host && playerId != s_instance.m_network.LocalPlayer?.Id)
+                s_instance.m_trader = playerId;
+        }
+
+        public static void EndReward() {
+            if (s_instance != null)
+                s_instance.m_trader = c_nobody;
+        }
+
         /// <summary>Host only, while a remote player's trade is worked out: their reward perk goes to them.</summary>
         public static bool BeforeAddPerk(Perk perk) {
             var trades = s_instance;
@@ -204,18 +219,22 @@ namespace WhiteKnuckleTogether {
             return false;
         }
 
-        /// <summary>Host only, while a remote player's trade is worked out: the flags it sets are set for them too.</summary>
-        public static void OnFlagSet(string flag, bool state) {
+        /// <summary>
+        /// Host only, while a remote player's trade is worked out: the flags it sets are set for them too. A flag holding data,
+        /// such as an altar's trade count (<c>altar-&lt;useFlag&gt;</c>, which the altar's Start parses), stays the host's: the
+        /// reward carries no data.
+        /// </summary>
+        public static void OnFlagSet(string flag, bool state, string? data) {
             var trades = s_instance;
-            if (trades != null && trades.m_trader != c_nobody && state && !string.IsNullOrEmpty(flag))
+            if (trades != null && trades.m_trader != c_nobody && state && !string.IsNullOrEmpty(flag) && string.IsNullOrEmpty(data))
                 trades.SendReward(WKTMotherRewardKind.Flag, flag);
         }
 
-        /// <summary>Host only, while a remote player's trade is worked out: whether the giver has a perk, not the host.</summary>
+        /// <summary>Host only, while a remote player's trade is worked out: whether the giver has a trade binding, not the host.</summary>
         public static bool TryGetTraderPerk(string perkId, out bool has) {
             var trades = s_instance;
             has = false;
-            if (trades == null || trades.m_trader == c_nobody || perkId != c_no_shops_perk) return false;
+            if (trades == null || trades.m_trader == c_nobody || Array.IndexOf(s_tradeBindings, perkId) < 0) return false;
             has = WKTPlayerPerks.Has(trades.m_trader, perkId);
             return true;
         }
