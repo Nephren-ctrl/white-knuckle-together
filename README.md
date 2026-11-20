@@ -45,18 +45,6 @@ Singleplayer is entirely unaffected.
    ```
 3. Copy the output from `WhiteKnuckleTogether/bin/Release/netstandard2.1/` into your `BepInEx/plugins/WhiteKnuckleTogether/` folder.
 
-## AI disclosure
-
-I'll try to keep this concise. As an introduction, I'm a Unity developer and programmer with many years of experience. I know what I'm doing.
-
-AI was used quite extensively in this mod to integrate hooks, analyze assets, and fix niche issues.
-
-AI is an extremely polarizing topic, yes, but the reality is that reverse engineering every aspect of White Knuckle to synchronize it over the network, while handling every edge case by hand, would take hundreds if not thousands of hours as Dark Machine continues to update the game. It simply isn't feasible for me to do in my spare time.
-
-AI is extremely good at decompiling, analyzing, and labeling packaged content and assemblies. It can figure out which triggers activate which events and how interactions resolve in a massive codebase, and it can inject custom code into those locations. I don't want to offend Dark Machine by creating something with these tools, but I think it's the only viable way for me to implement multiplayer in a reasonable amount of time.
-
-Unless you are inherently against AI programming, give it a try before you assume the quality of the mod.
-
 ## Known issues
 
 <details>
